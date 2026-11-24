@@ -28,9 +28,24 @@ def outline_cm(scale=1.0):
     return np.array([(NECK_DIP[0], NECK_DIP[1] * scale)] + right + left, dtype=np.float64)
 
 
+# Reference objects (long x short side, cm) for scale tests.
+A4 = (29.7, 21.0)
+CARD = (8.56, 5.398)
+
+
 def render(px_per_cm=30.0, tilt_deg=0.0, rotate_deg=0.0, noise=6.0, light_grad=0.25,
            bg=(205, 208, 206), fg=(40, 60, 150), size=(3000, 4000), cam_height_cm=110.0, seed=0):
     """Return (bgr_image, true px_per_cm at the shirt centre)."""
+    img, s, _ = render_with_ref(px_per_cm, tilt_deg, rotate_deg, noise, light_grad, bg, fg, size, cam_height_cm, seed)
+    return img, s
+
+
+def render_with_ref(px_per_cm=30.0, tilt_deg=0.0, rotate_deg=0.0, noise=6.0, light_grad=0.25,
+                    bg=(205, 208, 206), fg=(40, 60, 150), size=(3000, 4000), cam_height_cm=110.0, seed=0,
+                    ref=None, ref_at=(0.0, 50.0), ref_angle_deg=0.0, ref_color=(250, 250, 250)):
+    """Like render(), plus an optional flat rectangle `ref` = (w_cm, h_cm) lying on the floor,
+    centred at `ref_at` (cm, shirt centre = origin, y down), rotated by ref_angle_deg.
+    Returns (bgr_image, true px_per_cm at the shirt centre, ref corners in image px or None)."""
     rng = np.random.default_rng(seed)
     w, h = size
     pts = outline_cm()
@@ -42,23 +57,39 @@ def render(px_per_cm=30.0, tilt_deg=0.0, rotate_deg=0.0, noise=6.0, light_grad=0
     # Pinhole camera above the floor; focal length chosen so the centre scale == px_per_cm.
     f = px_per_cm * cam_height_cm
     t = math.radians(tilt_deg)
-    out = []
-    for X, Y in pts:
-        # camera at height H over the floor, tilted by t toward +Y
-        xc = X
-        yc = Y * math.cos(t) - cam_height_cm * math.sin(t)
-        zc = Y * math.sin(t) + cam_height_cm * math.cos(t)
-        out.append((w / 2 + f * xc / zc, h / 2 + f * yc / zc))
-    poly = np.array(out, dtype=np.int32)
+
+    def project(points):
+        out = []
+        for X, Y in points:
+            # camera at height H over the floor, tilted by t toward +Y
+            xc = X
+            yc = Y * math.cos(t) - cam_height_cm * math.sin(t)
+            zc = Y * math.sin(t) + cam_height_cm * math.cos(t)
+            out.append((w / 2 + f * xc / zc, h / 2 + f * yc / zc))
+        return np.array(out, dtype=np.float64)
+
+    poly = project(pts).astype(np.int32)
+    ref_px = None
+    if ref is not None:
+        rw, rh = ref
+        a = math.radians(ref_angle_deg)
+        R = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+        box = np.array([(-rw / 2, -rh / 2), (rw / 2, -rh / 2), (rw / 2, rh / 2), (-rw / 2, rh / 2)]) @ R.T
+        ref_px = project(box + np.array(ref_at))
 
     img = np.zeros((h, w, 3), np.float32)
     img[:] = bg
     shirt = np.zeros((h, w), np.uint8)
     cv2.fillPoly(shirt, [poly], 255)
     img[shirt > 0] = fg
+    if ref_px is not None:
+        paper = np.zeros((h, w), np.uint8)
+        cv2.fillPoly(paper, [np.round(ref_px * 16).astype(np.int32)], 255, shift=4)
+        alpha = (paper.astype(np.float32) / 255)[:, :, None]
+        img = img * (1 - alpha) + np.array(ref_color, np.float32) * alpha
     # soft fabric texture + lighting gradient + sensor noise + slight blur
     gy = np.linspace(1 - light_grad / 2, 1 + light_grad / 2, h)[:, None, None]
     img *= gy
     img += rng.normal(0, noise, img.shape)
     img = cv2.GaussianBlur(np.clip(img, 0, 255).astype(np.uint8), (5, 5), 0)
-    return img, px_per_cm
+    return img, px_per_cm, ref_px

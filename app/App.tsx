@@ -8,13 +8,13 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { ResultScreen } from './src/screens/ResultScreen';
 import { loadServerUrl } from './src/storage';
 import { C } from './src/theme';
-import type { MeasureResponse, Shot } from './src/types';
+import type { MeasureResponse, ScaleInfo, Shot } from './src/types';
 
 type Route =
   | { name: 'home' }
   | { name: 'capture' }
   | { name: 'calibrate'; shot: Shot }
-  | { name: 'result'; shot: Shot; result: MeasureResponse; calibrationCm: number };
+  | { name: 'result'; shot: Shot; result: MeasureResponse; scale: ScaleInfo };
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
@@ -38,11 +38,11 @@ export default function App() {
           shot={route.shot}
           serverUrl={serverUrl}
           onBack={() => setRoute({ name: 'capture' })}
-          onResult={(result, calibrationCm) => setRoute({ name: 'result', shot: route.shot, result, calibrationCm })}
+          onResult={(result, scale) => setRoute({ name: 'result', shot: route.shot, result, scale })}
         />
       )}
       {route.name === 'result' && (
-        <ResultScreen shot={route.shot} result={route.result} calibrationCm={route.calibrationCm} onDone={() => setRoute({ name: 'home' })} />
+        <ResultScreen shot={route.shot} result={route.result} scale={route.scale} onDone={() => setRoute({ name: 'home' })} />
       )}
     </View>
   );

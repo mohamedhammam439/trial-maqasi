@@ -4,8 +4,12 @@ POST /measure  (multipart)
   image        : the photo (JPEG/PNG), full resolution
   garment      : "tshirt" (only option in the PoC)
   px_per_cm    : optional float, if the scale is already known (e.g. from AR)
-  calib        : optional JSON {"p1":[x,y],"p2":[x,y],"cm":number} in image pixels
-One of px_per_cm / calib is required.
+  reference    : optional JSON describing the scale reference in the photo (see app/reference.py):
+                 {"type":"tape","p1":[x,y],"p2":[x,y],"cm":50}
+                 {"type":"a4"|"card","corners":[[x,y]*4]}        corners optional -> auto-detect
+                 {"type":"rect","w_cm":..,"h_cm":..,"corners":[...]}
+  calib        : legacy, same as reference type "tape": {"p1":[x,y],"p2":[x,y],"cm":number}
+One of px_per_cm / reference / calib is required.
 """
 import json
 
@@ -14,7 +18,8 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from .measure import MeasureError, measure, px_per_cm_from_calibration
+from .measure import MeasureError, measure
+from .reference import resolve as resolve_reference
 
 app = FastAPI(title="Maqasi PoC")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -31,17 +36,30 @@ async def measure_endpoint(
     garment: str = Form("tshirt"),
     px_per_cm: float | None = Form(None),
     calib: str | None = Form(None),
+    reference: str | None = Form(None),
 ):
     data = np.frombuffer(await image.read(), np.uint8)
     img = cv2.imdecode(data, cv2.IMREAD_COLOR)
     if img is None:
         raise HTTPException(400, "الصورة مش مقروءة.")
     try:
+        ref = None
         if px_per_cm is None:
-            if not calib:
-                raise MeasureError("محتاجين مقياس: px_per_cm أو نقطتين معروف طولهم.")
-            c = json.loads(calib)
-            px_per_cm = px_per_cm_from_calibration(tuple(c["p1"]), tuple(c["p2"]), float(c["cm"]))
-        return measure(img, px_per_cm, garment).to_dict()
+            raw = reference or calib
+            if not raw:
+                raise MeasureError("محتاجين مقياس: px_per_cm أو مرجع معروف مقاسه (متر، A4، كارت).")
+            try:
+                spec = json.loads(raw)
+            except json.JSONDecodeError:
+                raise MeasureError("بيانات المرجع مش JSON سليم.")
+            if not reference and isinstance(spec, dict):
+                spec.setdefault("type", "tape")
+            ref = resolve_reference(spec, img)
+            px_per_cm = ref.px_per_cm
+        out = measure(img, px_per_cm, garment).to_dict()
+        if ref is not None:
+            out["reference"] = ref.to_dict()
+            out["warnings"] = ref.warnings + out["warnings"]
+        return out
     except MeasureError as e:
         raise HTTPException(422, str(e))
