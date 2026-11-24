@@ -36,6 +36,20 @@
     "plugins": [
       "expo-sharing",
       [
+        "@reactvision/react-viro",
+        {
+          "android": {
+            "xRMode": [
+              "AR"
+            ]
+          },
+          "ios": {
+            "cameraUsagePermission": "مقاسي بيستخدم الكاميرا عشان يصوّر القطعة ويقيسها."
+          },
+          "telemetry": false
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {

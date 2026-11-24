@@ -17,7 +17,7 @@ import type { Shot } from '../types';
  *  3° keeps core measurements within ~1 cm; 8° already drifts ~1.5 cm. */
 export const MAX_TILT_DEG = 3;
 
-function useTiltDeg() {
+export function useTiltDeg() {
   const [tilt, setTilt] = useState(90);
   useEffect(() => {
     Accelerometer.setUpdateInterval(100);

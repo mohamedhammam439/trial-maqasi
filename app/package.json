@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@reactvision/react-viro": "3.2.3",
     "expo": "~58.0.26",
     "expo-build-properties": "~58.0.12",
     "expo-dev-client": "~58.0.21",
@@ -26,7 +27,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:ar": "node --experimental-strip-types scripts/test-ar-scale.mts"
   },
   "private": true
 }
