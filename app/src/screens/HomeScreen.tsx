@@ -6,7 +6,7 @@ import { clearRecords, exportRecords, loadRecords, saveServerUrl } from '../stor
 import { C, MEASUREMENT_LABELS } from '../theme';
 import type { TestRecord } from '../types';
 
-type Props = { serverUrl: string; setServerUrl: (v: string) => void; onStart: () => void };
+type Props = { serverUrl: string; setServerUrl: (v: string) => void; onStart: () => void; onArCompare: () => void };
 
 const METHOD_LABELS: Record<string, string> = {
   tape: 'المقياس: متر',
@@ -33,7 +33,7 @@ function summary(records: TestRecord[]) {
   return acc;
 }
 
-export function HomeScreen({ serverUrl, setServerUrl, onStart }: Props) {
+export function HomeScreen({ serverUrl, setServerUrl, onStart, onArCompare }: Props) {
   const [records, setRecords] = useState<TestRecord[]>([]);
   const [status, setStatus] = useState<'unknown' | 'ok' | 'down'>('unknown');
 
@@ -82,6 +82,9 @@ export function HomeScreen({ serverUrl, setServerUrl, onStart }: Props) {
 
       <Pressable onPress={onStart} style={s.btn}>
         <Text style={s.btnText}>صوّر تيشرت</Text>
+      </Pressable>
+      <Pressable onPress={onArCompare} style={s.secondary}>
+        <Text style={s.secondaryText}>مقارنة مقياس الـ AR بالمتر</Text>
       </Pressable>
 
       <View style={s.card}>
