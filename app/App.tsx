@@ -2,6 +2,9 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
+import { ArCaptureScreen, type ArShot } from './src/screens/ArCaptureScreen';
+import { ArCompareScreen } from './src/screens/ArCompareScreen';
+import { ArHomeScreen } from './src/screens/ArHomeScreen';
 import { CalibrateScreen } from './src/screens/CalibrateScreen';
 import { CaptureScreen } from './src/screens/CaptureScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -14,7 +17,11 @@ type Route =
   | { name: 'home' }
   | { name: 'capture' }
   | { name: 'calibrate'; shot: Shot }
-  | { name: 'result'; shot: Shot; result: MeasureResponse; scale: ScaleInfo };
+  | { name: 'result'; shot: Shot; result: MeasureResponse; scale: ScaleInfo }
+  // Separate AR flow: AR scale vs tape scale on the same photo, with its own log.
+  | { name: 'arHome' }
+  | { name: 'arCapture' }
+  | { name: 'arCompare'; shot: ArShot };
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
@@ -28,7 +35,9 @@ export default function App() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar style="dark" />
       {route.name === 'home' && (
-        <HomeScreen serverUrl={serverUrl} setServerUrl={setServerUrl} onStart={() => setRoute({ name: 'capture' })} />
+        <HomeScreen serverUrl={serverUrl} setServerUrl={setServerUrl} onStart={() => setRoute({ name: 'capture' })}
+          onArCompare={() => setRoute({ name: 'arHome' })}
+        />
       )}
       {route.name === 'capture' && (
         <CaptureScreen onBack={() => setRoute({ name: 'home' })} onShot={(shot) => setRoute({ name: 'calibrate', shot })} />
@@ -43,6 +52,20 @@ export default function App() {
       )}
       {route.name === 'result' && (
         <ResultScreen shot={route.shot} result={route.result} scale={route.scale} onDone={() => setRoute({ name: 'home' })} />
+      )}
+      {route.name === 'arHome' && (
+        <ArHomeScreen onBack={() => setRoute({ name: 'home' })} onStart={() => setRoute({ name: 'arCapture' })} />
+      )}
+      {route.name === 'arCapture' && (
+        <ArCaptureScreen onBack={() => setRoute({ name: 'arHome' })} onShot={(shot) => setRoute({ name: 'arCompare', shot })} />
+      )}
+      {route.name === 'arCompare' && (
+        <ArCompareScreen
+          shot={route.shot}
+          serverUrl={serverUrl}
+          onBack={() => setRoute({ name: 'arCapture' })}
+          onDone={() => setRoute({ name: 'arHome' })}
+        />
       )}
     </View>
   );
