@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import Svg, { Circle, Line as SvgLine } from 'react-native-svg';
+import Svg, { Circle, Line as SvgLine, Polygon } from 'react-native-svg';
 
 import { saveRecord } from '../storage';
 import { C, MEASUREMENT_LABELS } from '../theme';
-import type { MeasureResponse, Shot } from '../types';
+import type { MeasureResponse, ScaleInfo, Shot } from '../types';
 
-type Props = { shot: Shot; result: MeasureResponse; calibrationCm: number; onDone: () => void };
+type Props = { shot: Shot; result: MeasureResponse; scale: ScaleInfo; onDone: () => void };
 
-export function ResultScreen({ shot, result, calibrationCm, onDone }: Props) {
+export function ResultScreen({ shot, result, scale, onDone }: Props) {
   const [boxW, setBoxW] = useState(0);
   const [truth, setTruth] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
@@ -28,8 +28,9 @@ export function ResultScreen({ shot, result, calibrationCm, onDone }: Props) {
       id: `${Date.now()}`,
       takenAt: shot.takenAt,
       tiltDeg: shot.tiltDeg,
-      scaleMethod: 'calibration',
-      calibrationCm,
+      scaleMethod: scale.method,
+      calibrationCm: scale.calibrationCm,
+      reference: scale.reference,
       pxPerCm: result.px_per_cm,
       measured: result.measurements_cm,
       truth: parsed,
@@ -47,6 +48,14 @@ export function ResultScreen({ shot, result, calibrationCm, onDone }: Props) {
           <View style={{ width: boxW, height: boxH }}>
             <Image source={{ uri: shot.uri }} style={{ width: boxW, height: boxH, borderRadius: 16 }} />
             <Svg style={StyleSheet.absoluteFill}>
+              {result.reference?.corners && (
+                <Polygon
+                  points={result.reference.corners.map(([x, y]) => `${x * k},${y * k}`).join(' ')}
+                  fill="rgba(201,162,126,0.25)"
+                  stroke={C.gold}
+                  strokeWidth={2}
+                />
+              )}
               {result.lines.map((ln) => (
                 <SvgLine
                   key={ln.name}
