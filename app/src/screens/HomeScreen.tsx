@@ -8,6 +8,15 @@ import type { TestRecord } from '../types';
 
 type Props = { serverUrl: string; setServerUrl: (v: string) => void; onStart: () => void };
 
+const METHOD_LABELS: Record<string, string> = {
+  tape: 'المقياس: متر',
+  calibration: 'المقياس: متر',
+  a4: 'المقياس: ورقة A4',
+  card: 'المقياس: كارت',
+  rect: 'المقياس: مرجع تاني',
+  ar: 'المقياس: AR',
+};
+
 /** Mean absolute error per measurement across saved tests that have a tape value. */
 function summary(records: TestRecord[]) {
   const acc: Record<string, { sum: number; n: number; within1: number }> = {};
@@ -38,7 +47,15 @@ export function HomeScreen({ serverUrl, setServerUrl, onStart }: Props) {
     setStatus((await ping(serverUrl)) ? 'ok' : 'down');
   };
 
-  const stats = summary(records);
+  // One error table per scale reference, so tape / A4 / card can be compared on the same shirts.
+  const byMethod = new Map<string, TestRecord[]>();
+  for (const r of records) {
+    const m = r.scaleMethod === 'calibration' ? 'tape' : r.scaleMethod;
+    byMethod.set(m, [...(byMethod.get(m) ?? []), r]);
+  }
+  const groups = [...byMethod.entries()]
+    .map(([m, rs]) => ({ method: m, n: rs.length, stats: summary(rs) }))
+    .filter((g) => Object.keys(g.stats).length > 0);
 
   return (
     <ScrollView style={s.root} contentContainerStyle={{ padding: 16, paddingTop: 64, gap: 16 }}>
@@ -69,15 +86,20 @@ export function HomeScreen({ serverUrl, setServerUrl, onStart }: Props) {
 
       <View style={s.card}>
         <Text style={s.h2}>النتايج لحد دلوقتي ({records.length} تجربة)</Text>
-        {Object.keys(stats).length === 0 ? (
+        {groups.length === 0 ? (
           <Text style={s.sub}>لسه مفيش تجارب فيها قياس بالمتر.</Text>
         ) : (
-          Object.entries(stats).map(([k, v]) => (
-            <View key={k} style={s.statRow}>
-              <Text style={s.statVal}>
-                ±{(v.sum / v.n).toFixed(1)} سم · {Math.round((100 * v.within1) / v.n)}% في حدود 1 سم
-              </Text>
-              <Text style={s.label}>{MEASUREMENT_LABELS[k] ?? k}</Text>
+          groups.map((g) => (
+            <View key={g.method} style={{ gap: 2 }}>
+              <Text style={s.groupHead}>{METHOD_LABELS[g.method] ?? g.method} ({g.n})</Text>
+              {Object.entries(g.stats).map(([k, v]) => (
+                <View key={k} style={s.statRow}>
+                  <Text style={s.statVal}>
+                    ±{(v.sum / v.n).toFixed(1)} سم · {Math.round((100 * v.within1) / v.n)}% في حدود 1 سم
+                  </Text>
+                  <Text style={s.label}>{MEASUREMENT_LABELS[k] ?? k}</Text>
+                </View>
+              ))}
             </View>
           ))
         )}
@@ -116,4 +138,5 @@ const s = StyleSheet.create({
   secondaryText: { fontSize: 14, fontWeight: '600', color: C.text },
   statRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderTopWidth: 1, borderTopColor: C.border },
   statVal: { fontSize: 14, color: C.text2 },
+  groupHead: { fontSize: 14, fontWeight: '600', color: C.goldText, textAlign: 'right', marginTop: 6 },
 });
