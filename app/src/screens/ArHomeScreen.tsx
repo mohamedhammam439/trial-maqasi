@@ -9,7 +9,7 @@ type Props = { onStart: () => void; onBack: () => void };
 const fmt = (v?: { sum: number; n: number; within1: number }) =>
   v ? `±${(v.sum / v.n).toFixed(1)} · ${Math.round((100 * v.within1) / v.n)}%` : '—';
 
-/** Separate flow for the AR scale: its own tests, its own log, and a side-by-side summary with the tape scale. */
+/** Separate flow for the AR scale: its own tests, its own log, and AR error against tape-measured values. */
 export function ArHomeScreen({ onStart, onBack }: Props) {
   const [records, setRecords] = useState<ArTestRecord[]>([]);
   const refresh = useCallback(async () => setRecords(await loadArRecords()), []);
@@ -18,7 +18,7 @@ export function ArHomeScreen({ onStart, onBack }: Props) {
   }, [refresh]);
 
   const st = arSummary(records);
-  const keys = [...new Set([...Object.keys(st.ar), ...Object.keys(st.tape)])];
+  const keys = Object.keys(st.ar);
 
   return (
     <ScrollView style={s.root} contentContainerStyle={{ padding: 16, paddingTop: 56, gap: 16 }}>
@@ -26,12 +26,12 @@ export function ArHomeScreen({ onStart, onBack }: Props) {
         <Pressable onPress={onBack} style={s.back} accessibilityLabel="رجوع">
           <Text style={{ fontSize: 18, color: C.text }}>›</Text>
         </Pressable>
-        <Text style={s.h1}>مقارنة الـ AR</Text>
+        <Text style={s.h1}>القياس بالـ AR</Text>
         <View style={{ width: 44 }} />
       </View>
       <Text style={s.sub}>
-        هنا المقياس بييجي من الـ AR (الموبايل بيحدد الأرضية وبُعده عنها) بدل ما تضغط على المتر. سيب المتر جنب القطعة زي العادة، وبعد التصوير
-        اضغط عليه عشان نقارن المقياسين على نفس الصورة.
+        هنا المقياس بييجي من الـ AR بس: الموبايل بيحدد الأرضية وبُعده عنها، ومش محتاج متر في الصورة. بعد القياس اكتب قياساتك بالمتر عشان
+        نشوف الفرق.
       </Text>
 
       <Pressable onPress={onStart} style={s.btn}>
@@ -40,26 +40,18 @@ export function ArHomeScreen({ onStart, onBack }: Props) {
 
       <View style={s.card}>
         <Text style={s.h2}>النتايج ({records.length} تجربة)</Text>
-        <View style={s.statRow}>
-          <Text style={s.statVal}>
-            {st.meanScaleDiffPct != null ? `${st.meanScaleDiffPct.toFixed(1)}% (${st.scaleN} صورة)` : '—'}
-          </Text>
-          <Text style={s.label}>متوسط فرق مقياس الـ AR عن المتر</Text>
-        </View>
         {keys.length === 0 ? (
           <Text style={s.sub}>لسه مفيش تجارب فيها قياس بالمتر.</Text>
         ) : (
           <>
             <View style={s.statRow}>
-              <Text style={[s.colHead, { flex: 1 }]}>AR</Text>
-              <Text style={[s.colHead, { flex: 1 }]}>مقياس المتر</Text>
-              <Text style={[s.colHead, { flex: 1.2, textAlign: 'right' }]}>الخطأ (سم · ≤ 1 سم)</Text>
+              <Text style={[s.colHead, { flex: 1 }]}>متوسط الفرق عن المتر · ≤ 1 سم</Text>
+              <Text style={[s.colHead, { flex: 1, textAlign: 'right' }]}>القياس</Text>
             </View>
             {keys.map((k) => (
               <View key={k} style={s.statRow}>
                 <Text style={[s.statVal, { flex: 1 }]}>{fmt(st.ar[k])}</Text>
-                <Text style={[s.statVal, { flex: 1 }]}>{fmt(st.tape[k])}</Text>
-                <Text style={[s.label, { flex: 1.2 }]}>{MEASUREMENT_LABELS[k] ?? k}</Text>
+                <Text style={[s.label, { flex: 1 }]}>{MEASUREMENT_LABELS[k] ?? k}</Text>
               </View>
             ))}
           </>
