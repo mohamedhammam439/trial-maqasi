@@ -4,7 +4,7 @@ import Svg, { Circle, Line as SvgLine, Polygon } from 'react-native-svg';
 
 import { measure } from '../api';
 import { fitScaleModel, fuseA4WithAr, type FusedScale } from '../arScale';
-import { saveArRecord } from '../arStorage';
+import { loadArRecords, saveArRecord } from '../arStorage';
 import { C, MEASUREMENT_LABELS } from '../theme';
 import type { MeasureResponse } from '../types';
 import type { ArShot } from './ArCaptureScreen';
@@ -55,6 +55,16 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /** AR scale / A4 scale from the last saved photo that had both: tests whether AR's error stays the same
+   *  within a session, so the sheet would only be needed once. */
+  const [lastArError, setLastArError] = useState<number | null>(null);
+
+  useEffect(() => {
+    loadArRecords().then((all) => {
+      const last = all.find((r) => r.a4?.pxPerCm);
+      if (last?.a4) setLastArError(last.ar.pxPerCm / last.a4.pxPerCm);
+    });
+  }, []);
 
   const boxH = boxW ? (boxW * shot.height) / shot.width : 0;
   const k = boxW ? shot.width / boxW : 1; // display px -> image px
@@ -151,6 +161,9 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
             {((fused.perspective - 1) * 100).toFixed(1)}%
           </Text>
         )}
+        {lastArError && (
+          <Text style={s.sub}>«AR مصحّح» = الـ AR متصحّح بنسبة غلطه في آخر صورة فيها A4 ({((lastArError - 1) * 100).toFixed(0)}%).</Text>
+        )}
         <Text style={s.sub}>
           بُعد الموبايل عن الأرض: {shot.ar.distanceCm != null ? `${shot.ar.distanceCm} سم` : 'مش معروف'} · الميل {shot.tiltDeg}° · ثبات القياس ±
           {(shot.ar.spread * 100).toFixed(1)}%
@@ -193,6 +206,7 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
             <Text style={s.colHead}>AR</Text>
             <Text style={s.colHead}>A4</Text>
             <Text style={[s.colHead, { color: C.text, fontWeight: '700' }]}>AR+A4</Text>
+            {lastArError && <Text style={s.colHead}>AR مصحّح</Text>}
             <Text style={s.colHead}>بالمتر</Text>
             <Text style={[s.colHead, { flex: 1.1, textAlign: 'right' }]}>القياس</Text>
           </View>
@@ -203,6 +217,7 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
                 <DiffText value={arRes.measurements_cm[key]} truth={t} />
                 <DiffText value={a4Res?.measurements_cm[key]} truth={t} />
                 <DiffText value={fusedRes?.measurements_cm[key]} truth={t} />
+                {lastArError && <DiffText value={arRes.measurements_cm[key] * lastArError} truth={t} />}
                 <TextInput
                   value={truth[key] ?? ''}
                   onChangeText={(v) => setTruth((p) => ({ ...p, [key]: v }))}
