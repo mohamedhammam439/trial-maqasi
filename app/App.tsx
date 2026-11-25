@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
 import { ArCaptureScreen, type ArShot } from './src/screens/ArCaptureScreen';
-import { ArCompareScreen } from './src/screens/ArCompareScreen';
+import { ArResultScreen } from './src/screens/ArResultScreen';
 import { ArHomeScreen } from './src/screens/ArHomeScreen';
 import { CalibrateScreen } from './src/screens/CalibrateScreen';
 import { CaptureScreen } from './src/screens/CaptureScreen';
@@ -21,7 +21,7 @@ type Route =
   // Separate AR flow: AR scale vs tape scale on the same photo, with its own log.
   | { name: 'arHome' }
   | { name: 'arCapture' }
-  | { name: 'arCompare'; shot: ArShot };
+  | { name: 'arResult'; shot: ArShot };
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
@@ -57,10 +57,10 @@ export default function App() {
         <ArHomeScreen onBack={() => setRoute({ name: 'home' })} onStart={() => setRoute({ name: 'arCapture' })} />
       )}
       {route.name === 'arCapture' && (
-        <ArCaptureScreen onBack={() => setRoute({ name: 'arHome' })} onShot={(shot) => setRoute({ name: 'arCompare', shot })} />
+        <ArCaptureScreen onBack={() => setRoute({ name: 'arHome' })} onShot={(shot) => setRoute({ name: 'arResult', shot })} />
       )}
-      {route.name === 'arCompare' && (
-        <ArCompareScreen
+      {route.name === 'arResult' && (
+        <ArResultScreen
           shot={route.shot}
           serverUrl={serverUrl}
           onBack={() => setRoute({ name: 'arCapture' })}

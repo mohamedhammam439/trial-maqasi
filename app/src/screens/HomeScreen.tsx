@@ -84,7 +84,7 @@ export function HomeScreen({ serverUrl, setServerUrl, onStart, onArCompare }: Pr
         <Text style={s.btnText}>صوّر تيشرت</Text>
       </Pressable>
       <Pressable onPress={onArCompare} style={s.secondary}>
-        <Text style={s.secondaryText}>مقارنة مقياس الـ AR بالمتر</Text>
+        <Text style={s.secondaryText}>القياس بالـ AR</Text>
       </Pressable>
 
       <View style={s.card}>
