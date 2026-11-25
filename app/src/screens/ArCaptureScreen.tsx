@@ -19,7 +19,20 @@ export type ArShot = {
   height: number;
   tiltDeg: number;
   takenAt: string;
-  ar: ArScale & { distanceCm: number | null };
+  ar: ArScale & { distanceCm: number | null; debug?: ArDebug };
+};
+
+/** Raw numbers to diagnose a wrong AR scale from the exported JSON. */
+export type ArDebug = {
+  viewPt: [number, number];
+  pixelRatio: number;
+  shotPx: [number, number];
+  /** photo px per (view pt * pixelRatio). 1 means the screenshot is screen-sized. */
+  k: number;
+  /** Scale if Viro's hit-test coordinates were already photo pixels (i.e. without the k correction). */
+  pxPerCmIfHitsInPhotoPx: number | null;
+  hitTypes: Record<string, number>;
+  gridPoints: number;
 };
 
 const FLOOR_TYPES = ['ExistingPlaneUsingExtent', 'ExistingPlane', 'EstimatedHorizontalPlane'];
@@ -60,6 +73,7 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sceneRef = useRef<ViroARScene | null>(null);
+  const hitTypes = useRef<Record<string, number>>({});
   const navRef = useRef<ViroARSceneNavigator | null>(null);
   const tilt = useTiltDeg();
   const level = tilt <= MAX_TILT_DEG;
@@ -87,8 +101,11 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
 
   const cameraHeight = async (): Promise<number | null> => {
     try {
-      const p = await sceneRef.current?.getCameraPositionAsync();
-      return Array.isArray(p) && typeof p[1] === 'number' ? p[1] : null;
+      const p: any = await sceneRef.current?.getCameraPositionAsync();
+      const pos = Array.isArray(p) ? p : Array.isArray(p?.position) ? p.position : null;
+      if (pos && typeof pos[1] === 'number') return pos[1];
+      const o: any = await sceneRef.current?.getCameraOrientationAsync();
+      return Array.isArray(o?.position) && typeof o.position[1] === 'number' ? o.position[1] : null;
     } catch {
       return null;
     }
@@ -117,6 +134,7 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
     const out: FloorSample[] = [];
     hits.forEach((h, i) => {
       if (!h) return;
+      hitTypes.current[h.type] = (hitTypes.current[h.type] ?? 0) + 1;
       const p = h.transform.position;
       out.push({ px: { x: grid[i].fx * view.w * pr * k, y: grid[i].fy * view.h * pr * k }, world: [p[0], p[1], p[2]] });
     });
@@ -131,6 +149,7 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
     setError(null);
     try {
       const tiltAtShot = Math.round(tilt * 10) / 10;
+      hitTypes.current = {};
       const before = await sampleFloor(1);
       const shot = await navRef.current.arSceneNavigator.takeScreenshot(`maqasi_ar_${Date.now()}`, false);
       const after = await sampleFloor(1);
@@ -159,7 +178,19 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
         height: size.height,
         tiltDeg: tiltAtShot,
         takenAt: new Date().toISOString(),
-        ar: { ...merged, distanceCm: camY != null ? Math.round((camY - floorY) * 1000) / 10 : null },
+        ar: {
+          ...merged,
+          distanceCm: camY != null ? Math.round((camY - floorY) * 1000) / 10 : null,
+          debug: {
+            viewPt: [view.w, view.h],
+            pixelRatio: pr,
+            shotPx: [size.width, size.height],
+            k,
+            pxPerCmIfHitsInPhotoPx: scaleFromFloorSamples([...before, ...after])?.pxPerCm ?? null,
+            hitTypes: hitTypes.current,
+            gridPoints: 2 * gridFractions().length,
+          },
+        },
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
