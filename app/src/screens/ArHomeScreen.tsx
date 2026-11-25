@@ -18,7 +18,7 @@ export function ArHomeScreen({ onStart, onBack }: Props) {
   }, [refresh]);
 
   const st = arSummary(records);
-  const keys = Object.keys(st.ar);
+  const keys = [...new Set([...Object.keys(st.ar), ...Object.keys(st.a4), ...Object.keys(st.fused)])];
 
   return (
     <ScrollView style={s.root} contentContainerStyle={{ padding: 16, paddingTop: 56, gap: 16 }}>
@@ -26,12 +26,12 @@ export function ArHomeScreen({ onStart, onBack }: Props) {
         <Pressable onPress={onBack} style={s.back} accessibilityLabel="رجوع">
           <Text style={{ fontSize: 18, color: C.text }}>›</Text>
         </Pressable>
-        <Text style={s.h1}>القياس بالـ AR</Text>
+        <Text style={s.h1}>القياس بالـ AR + A4</Text>
         <View style={{ width: 44 }} />
       </View>
       <Text style={s.sub}>
-        هنا المقياس بييجي من الـ AR بس: الموبايل بيحدد الأرضية وبُعده عنها، ومش محتاج متر في الصورة. بعد القياس اكتب قياساتك بالمتر عشان
-        نشوف الفرق.
+        حط ورقة A4 مفرودة على الأرض جنب التيشرت (مش تحته ولا فوقه)، وصوّر بالـ AR. التطبيق بيقيس بتلات طرق: الـ AR لوحده، والـ A4
+        لوحدها، والاتنين مع بعض (مقياس الـ A4 + تصحيح الميل من الـ AR). بعد القياس اكتب قياساتك بالمتر عشان نشوف أنهي أدق.
       </Text>
 
       <Pressable onPress={onStart} style={s.btn}>
@@ -45,12 +45,16 @@ export function ArHomeScreen({ onStart, onBack }: Props) {
         ) : (
           <>
             <View style={s.statRow}>
-              <Text style={[s.colHead, { flex: 1 }]}>متوسط الفرق عن المتر · ≤ 1 سم</Text>
-              <Text style={[s.colHead, { flex: 1, textAlign: 'right' }]}>القياس</Text>
+              <Text style={[s.colHead, { flex: 1 }]}>AR</Text>
+              <Text style={[s.colHead, { flex: 1 }]}>A4</Text>
+              <Text style={[s.colHead, { flex: 1 }]}>AR+A4</Text>
+              <Text style={[s.colHead, { flex: 1, textAlign: 'right' }]}>الفرق عن المتر (سم · ≤ 1 سم)</Text>
             </View>
             {keys.map((k) => (
               <View key={k} style={s.statRow}>
                 <Text style={[s.statVal, { flex: 1 }]}>{fmt(st.ar[k])}</Text>
+                <Text style={[s.statVal, { flex: 1 }]}>{fmt(st.a4[k])}</Text>
+                <Text style={[s.statVal, { flex: 1 }]}>{fmt(st.fused[k])}</Text>
                 <Text style={[s.label, { flex: 1 }]}>{MEASUREMENT_LABELS[k] ?? k}</Text>
               </View>
             ))}

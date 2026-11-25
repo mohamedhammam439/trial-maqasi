@@ -45,3 +45,34 @@ for (const [h, t, noise, ok] of cases) {
 assert.equal(scaleFromFloorSamples([]), null);
 assert.notEqual(arScaleProblem(null), null);
 console.log('ok');
+
+// Fusion: AR with a 25% absolute scale error + 3° tilt, A4 measured exactly at its own spot.
+{
+  const { fitScaleModel, fuseA4WithAr } = await import('../src/arScale.ts');
+  const h = 1.5, t = 3, f = 1900, W = 1080, H = 2340;
+  const truthAt = (v: number) => {
+    // local px/cm at image row v for the simulated tilted camera (numerical: two rays 1 px apart)
+    const pt = (u: number, vv: number) => {
+      const tt = (t * Math.PI) / 180;
+      const dx = (u - W / 2) / f, dy = (vv - H / 2) / f;
+      const Y = -(Math.cos(tt) - dy * Math.sin(tt)), Z = dy * Math.cos(tt) + Math.sin(tt);
+      const s = h / -Y;
+      return [dx * s, Z * s];
+    };
+    // average of the vertical and horizontal local scale (pair estimates mix both directions)
+    const a = pt(W / 2, v), b = pt(W / 2, v + 1), c = pt(W / 2 + 1, v);
+    const sv = 1 / (100 * Math.hypot(a[0] - b[0], a[1] - b[1]));
+    const sh = 1 / (100 * Math.hypot(a[0] - c[0], a[1] - c[1]));
+    return Math.sqrt(sv * sh);
+  };
+  const wrong = sim(h, t).map((s) => ({ ...s, world: s.world.map((c) => c * 1.25) as [number, number, number] }));
+  const model = fitScaleModel(wrong)!;
+  const sheet = { x: 540, y: 1900 }, garment = { x: 540, y: 1000 };
+  const fused = fuseA4WithAr(truthAt(sheet.y), sheet, garment, model)!;
+  const errFused = fused.pxPerCm / truthAt(garment.y) - 1;
+  const errA4Only = truthAt(sheet.y) / truthAt(garment.y) - 1;
+  console.log(`fusion: A4-only ${(100 * errA4Only).toFixed(2)}%, fused ${(100 * errFused).toFixed(2)}%, AR correction ${fused.arCorrection.toFixed(3)}`);
+  assert.ok(Math.abs(errFused) < 0.005, 'fused scale should be within 0.5%');
+  assert.ok(Math.abs(fused.arCorrection - 1.25) < 0.02);
+  console.log('fusion ok');
+}
