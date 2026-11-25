@@ -52,6 +52,10 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   }, [serverUrl, shot]);
 
   const keys = Object.keys(arRes?.measurements_cm ?? {});
+  // Diagnostic: the same result if Viro's hit-test coordinates are photo pixels (no k correction).
+  // Lengths scale with 1/px_per_cm, so no second server call is needed.
+  const alt = shot.ar.debug?.pxPerCmIfHitsInPhotoPx;
+  const altFactor = alt && Math.abs(alt / shot.ar.pxPerCm - 1) > 0.02 ? shot.ar.pxPerCm / alt : null;
 
   const save = async () => {
     if (!arRes) return;
@@ -64,6 +68,7 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
       ar: {
         pxPerCm: shot.ar.pxPerCm,
         distanceCm: shot.ar.distanceCm,
+        debug: shot.ar.debug,
         spread: shot.ar.spread,
         topBottomDiff: shot.ar.topBottomDiff,
         samples: shot.ar.samples,
@@ -126,6 +131,7 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
         <View style={s.card}>
           <View style={s.headRow}>
             <Text style={s.colHead}>بالـ AR</Text>
+            {altFactor && <Text style={s.colHead}>AR (تجريبي)</Text>}
             <Text style={s.colHead}>بالمتر</Text>
             <Text style={[s.colHead, { flex: 1.3, textAlign: 'right' }]}>القياس</Text>
           </View>
@@ -134,6 +140,7 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
             return (
               <View key={key} style={s.row}>
                 <DiffText value={arRes.measurements_cm[key]} truth={t} />
+                {altFactor && <DiffText value={arRes.measurements_cm[key] * altFactor} truth={t} />}
                 <TextInput
                   value={truth[key] ?? ''}
                   onChangeText={(v) => setTruth((p) => ({ ...p, [key]: v }))}

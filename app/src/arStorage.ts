@@ -7,7 +7,7 @@ export type ArTestRecord = {
   id: string;
   takenAt: string;
   tiltDeg: number;
-  ar: { pxPerCm: number; distanceCm: number | null; spread: number; topBottomDiff: number; samples: number };
+  ar: { pxPerCm: number; distanceCm: number | null; spread: number; topBottomDiff: number; samples: number; debug?: unknown };
   /** Scale from tapping the tape on the same photo; null if the tape wasn't tapped. */
   tape: { pxPerCm: number; calibrationCm: number } | null;
   /** (AR scale - tape scale) / tape scale, in %. */
