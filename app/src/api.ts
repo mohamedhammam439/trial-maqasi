@@ -1,3 +1,5 @@
+import { File } from 'expo-file-system';
+
 import type { MeasureResponse, Pt, Scale } from './types';
 
 const xy = (p: Pt) => [p.x, p.y];
@@ -8,8 +10,10 @@ export async function measure(
   scale: Scale,
 ): Promise<MeasureResponse> {
   const form = new FormData();
-  // React Native's FormData accepts {uri, name, type} file descriptors.
-  form.append('image', { uri: photoUri, name: 'shot.jpg', type: 'image/jpeg' } as unknown as Blob);
+  // Expo's fetch (the global fetch since SDK 52) can't send React Native's {uri, name, type} parts
+  // ("Unsupported FormDataPart implementation"). An expo-file-system File is a Blob, so it can.
+  const file = new File(photoUri);
+  form.append('image', file, file.name || 'shot.jpg');
   form.append('garment', 'tshirt');
   if (scale.type === 'px_per_cm') {
     form.append('px_per_cm', String(scale.pxPerCm));
