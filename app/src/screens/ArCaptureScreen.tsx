@@ -20,6 +20,8 @@ export type ArShot = {
   tiltDeg: number;
   takenAt: string;
   ar: ArScale & { distanceCm: number | null; debug?: ArDebug };
+  /** Floor hits in photo pixels, for the AR + A4 fusion. */
+  floor: FloorSample[];
 };
 
 /** Raw numbers to diagnose a wrong AR scale from the exported JSON. */
@@ -178,6 +180,7 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
         height: size.height,
         tiltDeg: tiltAtShot,
         takenAt: new Date().toISOString(),
+        floor: scale([...before, ...after]),
         ar: {
           ...merged,
           distanceCm: camY != null ? Math.round((camY - floorY) * 1000) / 10 : null,

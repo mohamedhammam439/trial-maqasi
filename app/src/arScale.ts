@@ -102,3 +102,75 @@ export function arScaleProblem(a: ArScale | null): string | null {
 export function phoneMoved(before: ArScale, after: ArScale, tol = 0.015): boolean {
   return Math.abs(before.pxPerCm - after.pxPerCm) / before.pxPerCm > tol;
 }
+
+/** px/cm as a linear function of photo position, fitted to the pair estimates at each pair's midpoint.
+ *  When the phone isn't exactly parallel to the floor, the scale changes across the photo; AR measures
+ *  that change well even when its absolute scale is off, because a uniform scale error cancels in ratios. */
+export type ScaleModel = { a: number; bx: number; by: number; at: (x: number, y: number) => number };
+
+export function fitScaleModel(samples: FloorSample[]): ScaleModel | null {
+  const rows: [number, number, number][] = [];
+  for (let i = 0; i < samples.length; i++) {
+    for (let j = i + 1; j < samples.length; j++) {
+      const p = samples[i];
+      const q = samples[j];
+      const dpx = Math.hypot(p.px.x - q.px.x, p.px.y - q.px.y);
+      const dcm = 100 * Math.hypot(p.world[0] - q.world[0], p.world[1] - q.world[1], p.world[2] - q.world[2]);
+      if (dpx >= MIN_PAIR_PX && dcm > 0.5) rows.push([(p.px.x + q.px.x) / 2, (p.px.y + q.px.y) / 2, dpx / dcm]);
+    }
+  }
+  if (rows.length < 6) return null;
+  // Normal equations for r = a + bx*x + by*y.
+  const S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const t = [0, 0, 0];
+  for (const [x, y, r] of rows) {
+    const v = [1, x, y];
+    for (let m = 0; m < 3; m++) {
+      t[m] += v[m] * r;
+      for (let n = 0; n < 3; n++) S[m][n] += v[m] * v[n];
+    }
+  }
+  const sol = solve3(S, t);
+  if (!sol) return null;
+  const [a, bx, by] = sol;
+  return { a, bx, by, at: (x, y) => a + bx * x + by * y };
+}
+
+function solve3(A: number[][], b: number[]): number[] | null {
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < 3; c++) {
+    let p = c;
+    for (let r = c + 1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-12) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = 0; r < 3; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k < 4; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return [M[0][3] / M[0][0], M[1][3] / M[1][1], M[2][3] / M[2][2]];
+}
+
+export type FusedScale = {
+  pxPerCm: number;
+  /** A4 scale / AR scale at the sheet: how far off AR's absolute scale was (1 = exact). */
+  arCorrection: number;
+  /** Fused scale / A4 scale: the perspective correction AR added (1 = none). */
+  perspective: number;
+};
+
+/** A4 gives the absolute scale where the sheet lies; AR gives how the scale changes from the sheet
+ *  to the garment. Fused scale at the garment = A4 scale x AR(garment) / AR(sheet). */
+export function fuseA4WithAr(
+  a4PxPerCm: number,
+  a4Center: { x: number; y: number },
+  garmentCenter: { x: number; y: number },
+  model: ScaleModel,
+): FusedScale | null {
+  const atSheet = model.at(a4Center.x, a4Center.y);
+  const atGarment = model.at(garmentCenter.x, garmentCenter.y);
+  if (!(atSheet > 0) || !(atGarment > 0)) return null;
+  const perspective = atGarment / atSheet;
+  return { pxPerCm: a4PxPerCm * perspective, arCorrection: a4PxPerCm / atSheet, perspective };
+}

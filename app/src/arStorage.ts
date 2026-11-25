@@ -12,7 +12,13 @@ export type ArTestRecord = {
   tape: { pxPerCm: number; calibrationCm: number } | null;
   /** (AR scale - tape scale) / tape scale, in %. */
   scaleDiffPct: number | null;
+  /** Scale from the A4 sheet in the same photo (auto-detected); null if not found. Older records lack it. */
+  a4?: { pxPerCm: number; detected: boolean } | null;
+  /** A4 scale moved to the garment with AR's perspective. */
+  fused?: { pxPerCm: number; arCorrection: number; perspective: number } | null;
   measuredAr: Record<string, number>;
+  measuredA4?: Record<string, number> | null;
+  measuredFused?: Record<string, number> | null;
   measuredTape: Record<string, number> | null;
   truth: Record<string, number | null>;
   note: string;
@@ -57,6 +63,8 @@ const add = (acc: Record<string, Acc>, k: string, e: number) => {
 /** Mean absolute error per measurement for each scale method, plus mean |AR vs tape scale| difference. */
 export function arSummary(records: ArTestRecord[]) {
   const ar: Record<string, Acc> = {};
+  const a4: Record<string, Acc> = {};
+  const fused: Record<string, Acc> = {};
   const tape: Record<string, Acc> = {};
   let scaleSum = 0;
   let scaleN = 0;
@@ -68,8 +76,10 @@ export function arSummary(records: ArTestRecord[]) {
     for (const [k, t] of Object.entries(r.truth)) {
       if (t == null) continue;
       if (r.measuredAr[k] != null) add(ar, k, Math.abs(r.measuredAr[k] - t));
+      if (r.measuredA4?.[k] != null) add(a4, k, Math.abs(r.measuredA4[k] - t));
+      if (r.measuredFused?.[k] != null) add(fused, k, Math.abs(r.measuredFused[k] - t));
       if (r.measuredTape?.[k] != null) add(tape, k, Math.abs(r.measuredTape[k] - t));
     }
   }
-  return { ar, tape, meanScaleDiffPct: scaleN ? scaleSum / scaleN : null, scaleN };
+  return { ar, a4, fused, tape, meanScaleDiffPct: scaleN ? scaleSum / scaleN : null, scaleN };
 }
