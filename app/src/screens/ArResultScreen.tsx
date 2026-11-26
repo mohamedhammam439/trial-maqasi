@@ -65,27 +65,29 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
     let alive = true;
     (async () => {
       try {
-        const ar = await measure(serverUrl, shot.uri, { type: 'px_per_cm', pxPerCm: shot.ar.pxPerCm });
-        if (!alive) return;
-        setArRes(ar);
-        let a4: MeasureResponse;
+        // A4 first: its corners are then left out of the garment on the AR and fused calls too.
+        let a4: MeasureResponse | null = null;
         try {
           a4 = await measure(serverUrl, shot.uri, { type: 'a4' });
         } catch (e) {
           if (alive) setA4Error(errMsg(e));
-          return;
         }
         if (!alive) return;
-        setA4Res(a4);
-        const corners = a4.reference?.corners;
+        if (a4) setA4Res(a4);
+        const corners = a4?.reference?.corners;
+        const exclude = corners ? [corners] : undefined;
+        const ar = await measure(serverUrl, shot.uri, { type: 'px_per_cm', pxPerCm: shot.ar.pxPerCm }, exclude);
+        if (!alive) return;
+        setArRes(ar);
+        if (!a4 || !corners) return;
         const model = fitScaleModel(shot.floor ?? []);
         const center = garmentCenter(ar);
-        if (!corners || !model || !center) return;
+        if (!model || !center) return;
         const sheet = { x: corners.reduce((t, c) => t + c[0], 0) / 4, y: corners.reduce((t, c) => t + c[1], 0) / 4 };
         const f = fuseA4WithAr(a4.px_per_cm, sheet, center, model);
         if (!f) return;
         setFused(f);
-        const fr = await measure(serverUrl, shot.uri, { type: 'px_per_cm', pxPerCm: f.pxPerCm });
+        const fr = await measure(serverUrl, shot.uri, { type: 'px_per_cm', pxPerCm: f.pxPerCm }, exclude);
         if (alive) setFusedRes(fr);
       } catch (e) {
         if (alive) setError(errMsg(e));

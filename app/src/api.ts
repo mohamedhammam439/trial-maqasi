@@ -8,6 +8,8 @@ export async function measure(
   serverUrl: string,
   photoUri: string,
   scale: Scale,
+  /** Polygons (image px) to leave out of the garment, e.g. the A4 sheet's corners. */
+  exclude?: number[][][],
 ): Promise<MeasureResponse> {
   const form = new FormData();
   // Expo's fetch (the global fetch since SDK 52) can't send React Native's {uri, name, type} parts
@@ -25,6 +27,8 @@ export async function measure(
     if (scale.corners) ref.corners = scale.corners.map(xy);
     form.append('reference', JSON.stringify(ref));
   }
+
+  if (exclude?.length) form.append('exclude', JSON.stringify(exclude));
 
   const res = await fetch(`${serverUrl.replace(/\/$/, '')}/measure`, { method: 'POST', body: form });
   const body = await res.json().catch(() => ({}));
