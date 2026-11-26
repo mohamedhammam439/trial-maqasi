@@ -7,6 +7,7 @@ Supported references (the `type` field of the `reference` JSON sent to /measure)
   a4      an A4 sheet (21.0 x 29.7 cm) lying flat next to the garment
   card    a bank / ID card, ISO/IEC 7810 ID-1 (8.56 x 5.398 cm)
   rect    any other flat rectangle of known size: add "w_cm" and "h_cm"
+  aruco   the printable A4 sheet with four ArUco markers (app/aruco_sheet.py); always found by the server
 
 For a4 / card / rect, send the 4 corners in image pixels (any order):
           {"type": "card", "corners": [[x, y], [x, y], [x, y], [x, y]]}
@@ -30,7 +31,7 @@ KNOWN_RECTS: dict[str, tuple[float, float]] = {
     "a4": (29.7, 21.0),
     "card": (8.56, 5.398),
 }
-LABELS = {"tape": "المتر", "a4": "ورقة A4", "card": "الكارت", "rect": "المرجع"}
+LABELS = {"tape": "المتر", "a4": "ورقة A4", "card": "الكارت", "rect": "المرجع", "aruco": "ورقة الـ ArUco"}
 
 ASPECT_TOL = 0.08           # corners whose aspect is off by more than this are rejected
 SMALL_REF_PX = 250          # long side under this many px -> accuracy warning
@@ -215,6 +216,11 @@ def resolve(ref: dict, img_bgr: np.ndarray | None = None) -> Reference:
             raise MeasureError("المتر محتاج نقطتين والمسافة بينهم بالسنتيمتر.")
         return Reference("tape", px_per_cm_from_calibration(p1, p2, cm), points=[list(p1), list(p2)])
 
+    if kind == "aruco":
+        if img_bgr is None:
+            raise MeasureError("ورقة الـ ArUco محتاجة الصورة.")
+        return aruco_reference(img_bgr)
+
     if kind in KNOWN_RECTS:
         long_cm, short_cm = KNOWN_RECTS[kind]
     elif kind == "rect":
@@ -250,3 +256,18 @@ def resolve(ref: dict, img_bgr: np.ndarray | None = None) -> Reference:
             "للدقة الأعلى استخدم ورقة A4 أو المتر.")
     return Reference(kind, px_per_cm, corners=q.round(1).tolist(), size_cm=(long_cm, short_cm),
                      detected=detected, warnings=warnings)
+
+
+def aruco_reference(img_bgr: np.ndarray) -> Reference:
+    """Scale from the four ArUco markers' outer corners (sub-pixel); `corners` is the whole paper outline,
+    so the sheet is left out of the garment outline like a plain A4."""
+    from . import aruco_sheet
+
+    outer, paper, _ = aruco_sheet.locate(img_bgr)
+    long_cm, short_cm = aruco_sheet.OUTER_CM
+    px_per_cm, aspect_err = px_per_cm_from_rect(outer, long_cm, short_cm)
+    if aspect_err > ASPECT_TOL:
+        raise MeasureError("ورقة الـ ArUco مش مفرودة كويس. افردها وصوّر تاني.")
+    w, h = aruco_sheet.SHEET_MM
+    return Reference("aruco", px_per_cm, corners=order_corners(paper).round(1).tolist(), size_cm=(h / 10, w / 10),
+                     detected=True)

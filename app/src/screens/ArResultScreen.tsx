@@ -32,6 +32,30 @@ function DiffText({ value, truth }: { value: number | undefined; truth: number |
   );
 }
 
+/** Max spread (cm) between the frames of one shot for chest, hem and length before it's flagged. */
+const MAX_FRAME_SPREAD_CM = 0.5;
+const CORE_KEYS = ['chest_width', 'hem_width', 'body_length'];
+
+const med = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/** Median over frames: px/cm and each measurement; keeps frame 1's lines and reference for drawing.
+ *  spread = max - min per measurement. */
+function medianOfFrames(frames: MeasureResponse[]): { res: MeasureResponse; spread: Record<string, number> } {
+  const first = frames[0];
+  const measurements: Record<string, number> = {};
+  const spread: Record<string, number> = {};
+  for (const key of Object.keys(first.measurements_cm)) {
+    const xs = frames.map((f) => f.measurements_cm[key]).filter((v) => v != null);
+    measurements[key] = Math.round(med(xs) * 10) / 10;
+    spread[key] = Math.round((Math.max(...xs) - Math.min(...xs)) * 10) / 10;
+  }
+  return { res: { ...first, px_per_cm: med(frames.map((f) => f.px_per_cm)), measurements_cm: measurements }, spread };
+}
+
 /** Centre of the garment from the measurement lines (photo px). */
 function garmentCenter(r: MeasureResponse) {
   const pts = r.lines.filter((l) => l.confidence === 'high').flatMap((l) => [l.a, l.b]);
@@ -53,6 +77,10 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   const [a4Error, setA4Error] = useState<string | null>(null);
   const [fused, setFused] = useState<FusedScale | null>(null);
   const [fusedRes, setFusedRes] = useState<MeasureResponse | null>(null);
+  /** Multi-frame: number of frames in the sheet median and the per-measurement spread. */
+  const [frameInfo, setFrameInfo] = useState<{ n: number; spread: Record<string, number> } | null>(null);
+  const sheetKind = shot.sheet ?? 'a4';
+  const sheetLabel = sheetKind === 'aruco' ? 'ArUco' : 'A4';
   const [truth, setTruth] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(true);
@@ -71,11 +99,28 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
         // A4 first: its corners are then left out of the garment on the AR and fused calls too.
         let a4: MeasureResponse | null = null;
         try {
-          a4 = await measure(serverUrl, shot.uri, { type: 'a4' });
+          a4 = await measure(serverUrl, shot.uri, { type: sheetKind });
         } catch (e) {
           if (alive) setA4Error(errMsg(e));
         }
         if (!alive) return;
+        // Multi-frame: measure the extra photos with the sheet too and take the median per measurement.
+        if (a4 && shot.frames?.length) {
+          const all = [a4];
+          for (const f of shot.frames) {
+            try {
+              all.push(await measure(serverUrl, f.uri, { type: sheetKind }));
+            } catch {
+              // a frame where the sheet or garment wasn't found just drops out of the median
+            }
+            if (!alive) return;
+          }
+          if (all.length > 1) {
+            const m = medianOfFrames(all);
+            a4 = m.res;
+            setFrameInfo({ n: all.length, spread: m.spread });
+          }
+        }
         if (a4) setA4Res(a4);
         const corners = a4?.reference?.corners;
         const exclude = corners ? [corners] : undefined;
@@ -101,7 +146,7 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
     return () => {
       alive = false;
     };
-  }, [serverUrl, shot]);
+  }, [serverUrl, shot, sheetKind]);
 
   const keys = Object.keys(arRes?.measurements_cm ?? {});
 
@@ -142,6 +187,8 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
       scaleDiffPct: null,
       a4: a4Res ? { pxPerCm: a4Res.px_per_cm, detected: !!a4Res.reference?.detected } : null,
       fused,
+      sheet: sheetKind,
+      frames: frameInfo ? { n: frameInfo.n, maxSpreadCm: Math.max(...CORE_KEYS.map((k) => frameInfo.spread[k] ?? 0)) } : null,
       measuredAr: withSleeve(arRes)!,
       measuredA4: withSleeve(a4Res) ?? null,
       measuredFused: withSleeve(fusedRes) ?? null,
@@ -164,13 +211,22 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
         <Pressable onPress={onBack} style={s.back} accessibilityLabel="رجوع">
           <Text style={{ fontSize: 18, color: C.text }}>›</Text>
         </Pressable>
-        <Text style={s.title}>القياس بالـ AR + A4</Text>
+        <Text style={s.title}>القياس بورقة {sheetLabel}</Text>
         <View style={{ width: 44 }} />
       </View>
 
       <View style={s.card}>
         <Text style={s.label}>مقياس الـ AR: {shot.ar.pxPerCm.toFixed(2)} px/cm</Text>
-        {a4Res && <Text style={s.label}>مقياس الـ A4: {a4Res.px_per_cm.toFixed(2)} px/cm</Text>}
+        {a4Res && <Text style={s.label}>مقياس الـ {sheetLabel}: {a4Res.px_per_cm.toFixed(2)} px/cm</Text>}
+        {frameInfo && (
+          <Text style={s.sub}>
+            الوسيط من {frameInfo.n} لقطات · أكبر فرق بينهم{' '}
+            {Math.max(...CORE_KEYS.map((k) => frameInfo.spread[k] ?? 0)).toFixed(1)} سم
+          </Text>
+        )}
+        {frameInfo && Math.max(...CORE_KEYS.map((k) => frameInfo.spread[k] ?? 0)) > MAX_FRAME_SPREAD_CM && (
+          <Text style={s.warn}>اللقطات مختلفة عن بعض أكتر من نص سم. غالباً الموبايل اتحرك وقت التصوير. صوّر تاني.</Text>
+        )}
         {fused && (
           <Text style={s.label}>
             المدمج: {fused.pxPerCm.toFixed(2)} px/cm · غلط الـ AR {((1 / fused.arCorrection - 1) * 100).toFixed(0)}% · تصحيح الميل{' '}
@@ -179,7 +235,7 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
         )}
         {arA4Gap != null && Math.abs(arA4Gap) > AR_A4_MAX_GAP && (
           <Text style={s.sub}>
-            الـ AR مختلف عن الـ A4 بـ {(arA4Gap * 100).toFixed(1)}%. القياس بيعتمد على الـ A4، فده مش بيأثر على النتيجة.
+            الـ AR مختلف عن الـ {sheetLabel} بـ {(arA4Gap * 100).toFixed(1)}%. القياس بيعتمد على الورقة، فده مش بيأثر على النتيجة.
           </Text>
         )}
         {shot.arProblem && <Text style={s.sub}>ملاحظة على الـ AR: {shot.arProblem}</Text>}
@@ -246,7 +302,7 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
       )}
 
       {error && <Text style={s.error}>{error}</Text>}
-      {a4Error && <Text style={s.warn}>ورقة الـ A4: {a4Error}</Text>}
+      {a4Error && <Text style={s.warn}>ورقة الـ {sheetLabel}: {a4Error}</Text>}
       {busy && <ActivityIndicator color={C.petrol} />}
       {arRes?.warnings.map((w) => <Text key={w} style={s.warn}>{w}</Text>)}
 
@@ -254,8 +310,8 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
         <View style={s.card}>
           <View style={s.headRow}>
             <Text style={s.colHead}>AR</Text>
-            <Text style={s.colHead}>A4</Text>
-            <Text style={[s.colHead, { color: C.text, fontWeight: '700' }]}>AR+A4</Text>
+            <Text style={[s.colHead, { color: C.text, fontWeight: '700' }]}>{sheetLabel}</Text>
+            <Text style={s.colHead}>AR+{sheetLabel}</Text>
             <Text style={s.colHead}>بالمتر</Text>
             <Text style={[s.colHead, { flex: 1.1, textAlign: 'right' }]}>القياس</Text>
           </View>

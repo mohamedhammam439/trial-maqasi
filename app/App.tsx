@@ -9,6 +9,7 @@ import { CalibrateScreen } from './src/screens/CalibrateScreen';
 import { CaptureScreen } from './src/screens/CaptureScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ResultScreen } from './src/screens/ResultScreen';
+import type { SheetKind } from './src/arStorage';
 import { loadServerUrl } from './src/storage';
 import { C } from './src/theme';
 import type { MeasureResponse, ScaleInfo, Shot } from './src/types';
@@ -20,7 +21,7 @@ type Route =
   | { name: 'result'; shot: Shot; result: MeasureResponse; scale: ScaleInfo }
   // Separate AR flow: AR scale vs tape scale on the same photo, with its own log.
   | { name: 'arHome' }
-  | { name: 'arCapture' }
+  | { name: 'arCapture'; sheet: SheetKind }
   | { name: 'arResult'; shot: ArShot };
 
 export default function App() {
@@ -54,16 +55,16 @@ export default function App() {
         <ResultScreen shot={route.shot} result={route.result} scale={route.scale} onDone={() => setRoute({ name: 'home' })} />
       )}
       {route.name === 'arHome' && (
-        <ArHomeScreen onBack={() => setRoute({ name: 'home' })} onStart={() => setRoute({ name: 'arCapture' })} />
+        <ArHomeScreen onBack={() => setRoute({ name: 'home' })} onStart={(sheet) => setRoute({ name: 'arCapture', sheet })} />
       )}
       {route.name === 'arCapture' && (
-        <ArCaptureScreen serverUrl={serverUrl} onBack={() => setRoute({ name: 'arHome' })} onShot={(shot) => setRoute({ name: 'arResult', shot })} />
+        <ArCaptureScreen serverUrl={serverUrl} sheet={route.sheet} onBack={() => setRoute({ name: 'arHome' })} onShot={(shot) => setRoute({ name: 'arResult', shot })} />
       )}
       {route.name === 'arResult' && (
         <ArResultScreen
           shot={route.shot}
           serverUrl={serverUrl}
-          onBack={() => setRoute({ name: 'arCapture' })}
+          onBack={() => setRoute({ name: 'arCapture', sheet: route.shot.sheet })}
           onDone={() => setRoute({ name: 'arHome' })}
         />
       )}

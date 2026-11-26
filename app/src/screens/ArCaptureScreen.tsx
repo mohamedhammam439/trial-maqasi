@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, PixelRatio, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { checkA4, type A4Check } from '../api';
+import type { SheetKind } from '../arStorage';
 
 import { arScaleProblem, gridFractions, median, phoneMoved, scaleFromFloorSamples, type ArScale, type FloorSample } from '../arScale';
 import { C } from '../theme';
@@ -27,6 +28,10 @@ export type ArShot = {
   floor: FloorSample[];
   /** Why the AR scale itself looks unreliable (it no longer blocks the shot: the A4 sheet sets the scale). */
   arProblem?: string | null;
+  /** Which scale sheet lies on the garment. */
+  sheet: SheetKind;
+  /** Extra photos taken right after the first one; the sheet measurement is the median over all of them. */
+  frames: { uri: string; width: number; height: number }[];
 };
 
 /** Raw numbers to diagnose a wrong AR scale from the exported JSON. */
@@ -44,6 +49,10 @@ export type ArDebug = {
 
 /** How often the live A4 check sends a preview frame to the server. */
 const A4_CHECK_MS = 1500;
+/** Auto-capture once everything has been OK for this long. */
+const AUTO_HOLD_MS = 1000;
+/** Photos per shot (the first one plus extras); the result takes the median. */
+const FRAMES = 3;
 
 const FLOOR_TYPES =['ExistingPlaneUsingExtent', 'ExistingPlane', 'EstimatedHorizontalPlane'];
 
@@ -74,7 +83,17 @@ function bestFloorHit(results: ViroARHitTestResult[] | null | undefined): ViroAR
 const getSize = (uri: string) =>
   new Promise<{ width: number; height: number }>((resolve, reject) => Image.getSize(uri, (width, height) => resolve({ width, height }), reject));
 
-export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: string; onShot: (s: ArShot) => void; onBack: () => void }) {
+export function ArCaptureScreen({
+  serverUrl,
+  sheet,
+  onShot,
+  onBack,
+}: {
+  serverUrl: string;
+  sheet: SheetKind;
+  onShot: (s: ArShot) => void;
+  onBack: () => void;
+}) {
   const [supported, setSupported] = useState<boolean | null>(null);
   const [unsupportedWhy, setUnsupportedWhy] = useState('');
   const [tracking, setTracking] = useState(false);
@@ -92,6 +111,10 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
   const [a4Err, setA4Err] = useState<string | null>(null);
   const busyRef = useRef(false);
   busyRef.current = busy;
+  /** True while a live A4 check is taking its screenshot / waiting for the server. */
+  const checkingRef = useRef(false);
+  /** Auto-capture fired for this 'ready' spell; re-armed when the phone stops being ready. */
+  const autoFired = useRef(false);
 
   useEffect(() => {
     isARSupportedOnDevice()
@@ -146,17 +169,16 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
   useEffect(() => {
     if (!tracking || !serverUrl) return;
     let alive = true;
-    let running = false;
     const id = setInterval(async () => {
-      if (running || busyRef.current || !navRef.current) return;
-      running = true;
+      if (checkingRef.current || busyRef.current || !navRef.current) return;
+      checkingRef.current = true;
       let uri: string | null = null;
       try {
         const shot = await navRef.current.arSceneNavigator.takeScreenshot(`maqasi_check_${Date.now()}`, false);
         if (!shot?.success || !shot.url) return;
         const u = shot.url.startsWith('file://') ? shot.url : `file://${shot.url}`;
         uri = u;
-        const r = await checkA4(serverUrl, u);
+        const r = await checkA4(serverUrl, u, sheet);
         if (alive) {
           setA4(r);
           setA4Err(null);
@@ -167,7 +189,7 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
           setA4Err(e instanceof Error ? e.message : String(e));
         }
       } finally {
-        running = false;
+        checkingRef.current = false;
         if (uri) {
           try {
             new File(uri).delete();
@@ -179,7 +201,7 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
       alive = false;
       clearInterval(id);
     };
-  }, [tracking, serverUrl]);
+  }, [tracking, serverUrl, sheet]);
 
   /** Grid of floor hits, in photo pixels (k = photo px per view px). */
   const sampleFloor = async (k: number): Promise<FloorSample[]> => {
@@ -196,7 +218,23 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
   };
 
   const a4Ok = !!a4?.ok;
-  const ready = supported && tracking && floorCm != null && level && a4Ok && !busy;
+  const ready = !!(supported && tracking && floorCm != null && level && a4Ok && !busy);
+
+  // Auto-capture: once everything has been OK for AUTO_HOLD_MS, shoot without touching the phone.
+  // It fires once per 'ready' spell, so a failed shot doesn't retry in a loop: move the phone to re-arm.
+  useEffect(() => {
+    if (!ready) {
+      if (!busyRef.current) autoFired.current = false;
+      return;
+    }
+    if (autoFired.current) return;
+    const t = setTimeout(() => {
+      autoFired.current = true;
+      take();
+    }, AUTO_HOLD_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   const take = async () => {
     if (!ready || !navRef.current) return;
@@ -205,8 +243,19 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
     try {
       const tiltAtShot = Math.round(tilt * 10) / 10;
       hitTypes.current = {};
+      // Let a running live check finish so its screenshot doesn't collide with ours.
+      for (let i = 0; checkingRef.current && i < 60; i++) await new Promise((r) => setTimeout(r, 50));
       const before = await sampleFloor(1);
-      const shot = await navRef.current.arSceneNavigator.takeScreenshot(`maqasi_ar_${Date.now()}`, false);
+      const nav = navRef.current.arSceneNavigator;
+      const shot = await nav.takeScreenshot(`maqasi_ar_${Date.now()}`, false);
+      // A few more photos right away: the result takes the median, which evens out edge/segmentation noise.
+      const extra: { uri: string; width: number; height: number }[] = [];
+      for (let i = 1; i < FRAMES; i++) {
+        const e = await nav.takeScreenshot(`maqasi_ar_${Date.now()}_${i}`, false);
+        if (!e?.success || !e.url) continue;
+        const u = e.url.startsWith('file://') ? e.url : `file://${e.url}`;
+        extra.push({ uri: u, ...(await getSize(u)) });
+      }
       const after = await sampleFloor(1);
       const camY = await cameraHeight();
       if (!shot?.success || !shot.url) throw new Error('مقدرناش ناخد الصورة من الـ AR. جرب تاني.');
@@ -236,6 +285,8 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
         takenAt: new Date().toISOString(),
         floor: scale([...before, ...after]),
         arProblem,
+        sheet,
+        frames: extra,
         ar: {
           ...merged,
           distanceCm: camY != null ? Math.round((camY - floorY) * 1000) / 10 : null,
@@ -285,10 +336,12 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
           : a4Err
             ? `مش قادرين نفحص الورقة: ${a4Err}`
             : !a4
-              ? 'بنفحص ورقة الـ A4…'
+              ? 'بنفحص الإضاءة والورقة والتيشرت…'
               : !a4.ok
                 ? a4.message
-                : `الورقة مظبوطة والميل ${tilt.toFixed(1)}° — صوّر`;
+                : busy
+                  ? 'بيصوّر… ثبّت الموبايل'
+                  : `الورقة مظبوطة والميل ${tilt.toFixed(1)}° — ثبّت، هيصوّر لوحده`;
 
   return (
     <View style={s.root}>
@@ -318,9 +371,12 @@ export function ArCaptureScreen({ serverUrl, onShot, onBack }: { serverUrl: stri
         {error && <Text style={s.error}>{error}</Text>}
         <View style={s.checks}>
           <Text style={[s.check, level ? s.ok : s.no]}>{level ? '✓' : '!'} الميل ≤ {MAX_TILT_DEG}°</Text>
-          <Text style={[s.check, a4Ok ? s.ok : s.no]}>
-            {a4Ok ? '✓' : '!'} ورقة A4{a4?.aspect_err != null ? ` (${(a4.aspect_err * 100).toFixed(1)}%)` : ''}
+          <Text style={[s.check, a4?.light?.ok ? s.ok : s.no]}>{a4?.light?.ok ? '✓' : '!'} الإضاءة</Text>
+          <Text style={[s.check, (a4?.sheet?.ok ?? a4Ok) ? s.ok : s.no]}>
+            {(a4?.sheet?.ok ?? a4Ok) ? '✓' : '!'} {sheet === 'aruco' ? 'ورقة ArUco' : 'ورقة A4'}
+            {a4?.aspect_err != null ? ` (${(a4.aspect_err * 100).toFixed(1)}%)` : ''}
           </Text>
+          <Text style={[s.check, a4?.garment?.ok ? s.ok : s.no]}>{a4?.garment?.ok ? '✓' : '!'} التيشرت مفرود</Text>
         </View>
         <Pressable
           onPress={take}

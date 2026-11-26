@@ -21,7 +21,7 @@ export type MeasureResponse = {
 };
 
 /** Objects of known size the user can lay next to the garment for scale. */
-export type ReferenceKind = 'tape' | 'a4' | 'card' | 'rect';
+export type ReferenceKind = 'tape' | 'a4' | 'card' | 'rect' | 'aruco';
 
 /** How the scale of a test was obtained. 'ar' is the separate AR flow. */
 export type ScaleMethod = ReferenceKind | 'ar';
@@ -30,7 +30,7 @@ export type ScaleMethod = ReferenceKind | 'ar';
  *  leave them out for a4/card/rect and the server finds the object itself. */
 export type Scale =
   | { type: 'tape'; p1: Pt; p2: Pt; cm: number }
-  | { type: 'a4' | 'card'; corners?: Pt[] }
+  | { type: 'a4' | 'card' | 'aruco'; corners?: Pt[] }
   | { type: 'rect'; wCm: number; hCm: number; corners?: Pt[] }
   | { type: 'px_per_cm'; pxPerCm: number };
 

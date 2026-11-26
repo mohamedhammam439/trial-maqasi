@@ -21,10 +21,31 @@ export type ArTestRecord = {
   measuredFused?: Record<string, number> | null;
   measuredTape: Record<string, number> | null;
   truth: Record<string, number | null>;
+  /** Which sheet set the scale (absent = plain A4). */
+  sheet?: SheetKind;
+  /** Multi-frame: how many frames went into the A4 median, and the largest per-measurement spread (cm). */
+  frames?: { n: number; maxSpreadCm: number } | null;
   note: string;
 };
 
 const LOG = `${FileSystem.documentDirectory}maqasi-ar-tests.json`;
+const SETTINGS = `${FileSystem.documentDirectory}maqasi-ar-settings.json`;
+
+/** Which scale sheet lies on the garment: the plain white A4, or the printed ArUco sheet. */
+export type SheetKind = 'a4' | 'aruco';
+
+export async function loadSheetKind(): Promise<SheetKind> {
+  try {
+    const info = await FileSystem.getInfoAsync(SETTINGS);
+    if (!info.exists) return 'a4';
+    const v = JSON.parse(await FileSystem.readAsStringAsync(SETTINGS))?.sheet;
+    return v === 'aruco' ? 'aruco' : 'a4';
+  } catch {
+    return 'a4';
+  }
+}
+
+export const saveSheetKind = (sheet: SheetKind) => FileSystem.writeAsStringAsync(SETTINGS, JSON.stringify({ sheet }));
 export async function loadArRecords(): Promise<ArTestRecord[]> {
   try {
     const info = await FileSystem.getInfoAsync(LOG);

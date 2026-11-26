@@ -28,9 +28,11 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .measure import MeasureError, measure
+from . import aruco_sheet, precheck
 from .reference import KNOWN_RECTS, detect_rect, px_per_cm_from_rect, resolve as resolve_reference
 
-LIVE_ASPECT_TOL = 0.03  # live A4 check: the sheet's long/short side ratio must be within 3% of 29.7/21
+LIVE_ASPECT_TOL = 0.03
+ARUCO_MAX_REPROJ_PX = 2.0  # marker corners off a single plane by more than this -> sheet not flat  # live A4 check: the sheet's long/short side ratio must be within 3% of 29.7/21
 
 CAPTURES = Path(__file__).resolve().parent.parent / "captures"
 SAVE_CAPTURES = os.environ.get("MAQASI_SAVE_CAPTURES", "1") != "0"
@@ -57,31 +59,65 @@ app = FastAPI(title="Maqasi PoC")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+@app.get("/aruco-sheet.png")
+def aruco_sheet_png():
+    """The printable ArUco sheet (300 dpi PNG; print at 100%)."""
+    from fastapi.responses import Response
+    ok, buf = cv2.imencode(".png", aruco_sheet.render_sheet())
+    return Response(buf.tobytes(), media_type="image/png")
+
+
 @app.get("/health")
 def health():
     return {"ok": True}
 
 
-@app.post("/check_a4")
-async def check_a4(image: UploadFile = File(...)):
-    """Live check before the shot: is a flat A4 sheet in view with the right proportions?
-    Returns {ok, found, aspect_err, px_per_cm, corners, message}; never saves the image."""
-    img = cv2.imdecode(np.frombuffer(await image.read(), np.uint8), cv2.IMREAD_COLOR)
-    if img is None:
-        raise HTTPException(400, "الصورة مش مقروءة.")
-    long_cm, short_cm = KNOWN_RECTS["a4"]
+def _sheet_check(img: np.ndarray, kind: str) -> dict:
+    """Is the scale sheet in view, flat, with the right proportions?"""
+    flat = True
     try:
-        corners = detect_rect(img, long_cm, short_cm)
-        px_per_cm, aspect_err = px_per_cm_from_rect(corners, long_cm, short_cm)
-    except MeasureError:
+        if kind == "aruco":
+            outer, corners, reproj = aruco_sheet.locate(img)
+            px_per_cm, aspect_err = px_per_cm_from_rect(outer, *aruco_sheet.OUTER_CM)
+            flat = reproj <= ARUCO_MAX_REPROJ_PX
+        else:
+            long_cm, short_cm = KNOWN_RECTS["a4"]
+            corners = detect_rect(img, long_cm, short_cm)
+            px_per_cm, aspect_err = px_per_cm_from_rect(corners, long_cm, short_cm)
+    except MeasureError as e:
         return {"ok": False, "found": False, "aspect_err": None, "px_per_cm": None, "corners": None,
-                "message": "مش لاقيين ورقة الـ A4. حطها مفرودة في نص التيشرت."}
-    ok = aspect_err <= LIVE_ASPECT_TOL
+                "message": str(e) if kind == "aruco" else "مش لاقيين ورقة الـ A4. حطها مفرودة في نص التيشرت."}
+    ok = aspect_err <= LIVE_ASPECT_TOL and flat
+    label = "ورقة الـ ArUco" if kind == "aruco" else "ورقة الـ A4"
     return {
         "ok": ok, "found": True, "aspect_err": round(aspect_err, 4), "px_per_cm": round(px_per_cm, 3),
         "corners": np.asarray(corners).round(1).tolist(),
-        "message": "ورقة الـ A4 مظبوطة." if ok else
-        f"نسبة أبعاد الورقة مش مظبوطة ({aspect_err * 100:.1f}%). افردها كويس واتأكد إنها كلها باينة.",
+        "message": f"{label} مظبوطة." if ok else
+        f"{label} مش مفرودة كويس." if not flat else
+        f"نسبة أبعاد {label} مش مظبوطة ({aspect_err * 100:.1f}%). افردها كويس واتأكد إنها كلها باينة.",
+    }
+
+
+@app.post("/check_a4")
+async def check_a4(image: UploadFile = File(...), kind: str = Form("a4")):
+    """Live check of a preview frame before the shot; the app only lets the user shoot when `ok`.
+    kind: "a4" (plain white sheet) or "aruco" (the printed marker sheet).
+    Returns the sheet check at the top level ({found, aspect_err, px_per_cm, corners}) plus
+    sheet/light/garment: {ok, message, ...}; ok = all three; message = the first thing to fix.
+    Never saves the image."""
+    img = cv2.imdecode(np.frombuffer(await image.read(), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "الصورة مش مقروءة.")
+    sheet = _sheet_check(img, kind)
+    light, garment = precheck.run(img, sheet["corners"])
+    failing = [c for c in (light, sheet, garment) if not c["ok"]]
+    return {
+        **sheet,
+        "ok": not failing,
+        "message": failing[0]["message"] if failing else "كله مظبوط.",
+        "sheet": {"ok": sheet["ok"], "message": sheet["message"]},
+        "light": light,
+        "garment": garment,
     }
 
 
