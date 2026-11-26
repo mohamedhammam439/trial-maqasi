@@ -103,7 +103,7 @@ def render_with_aruco(px_per_cm=12.0, ref_at=(0.0, 0.0), ref_angle_deg=0.0, tilt
     w_cm, h_cm = (v / 10 for v in aruco_sheet.SHEET_MM)
     img, s, paper = render_with_ref(px_per_cm=px_per_cm, tilt_deg=tilt_deg, size=size, seed=seed,
                                     ref=(w_cm, h_cm), ref_at=ref_at, ref_angle_deg=ref_angle_deg)
-    sheet = aruco_sheet.render_sheet(dpi=150)
+    sheet = cv2.cvtColor(aruco_sheet.render_sheet(dpi=150), cv2.COLOR_BGR2GRAY)
     sh, sw = sheet.shape
     H = cv2.getPerspectiveTransform(np.float32([(0, 0), (sw, 0), (sw, sh), (0, sh)]), paper.astype(np.float32))
     warped = cv2.warpPerspective(sheet, H, (size[0], size[1]), flags=cv2.INTER_AREA, borderValue=255)

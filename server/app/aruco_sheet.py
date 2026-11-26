@@ -10,6 +10,8 @@ measure it with a ruler after printing.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 
@@ -21,6 +23,10 @@ MARGIN_MM = 15.0
 IDS = (0, 1, 2, 3)                 # top-left, top-right, bottom-right, bottom-left
 DICT = cv2.aruco.DICT_4X4_50
 CHECK_LINE_MM = 100.0
+CHECK_LINE_Y_MM = 195.0            # check line sits below the logo
+LOGO = Path(__file__).resolve().parent / "assets" / "maqasi-logo.png"
+LOGO_BOX_MM = (80.0, 80.0)         # max logo size, centred at LOGO_CENTER_MM
+LOGO_CENTER_MM = (105.0, 122.0)    # >= 2 cm clear of every marker and of the check line
 
 # The rectangle through the markers' outer corners: (long, short) in cm.
 OUTER_CM = ((SHEET_MM[1] - 2 * MARGIN_MM) / 10, (SHEET_MM[0] - 2 * MARGIN_MM) / 10)
@@ -46,29 +52,49 @@ def outer_corners_mm() -> np.ndarray:
     return np.array([m[0][0], m[1][1], m[2][2], m[3][3]])
 
 
-def render_sheet(dpi: int = 300) -> np.ndarray:
-    """The printable sheet as a grayscale image at `dpi` (exactly A4 at that resolution)."""
+def _paste_logo(img: np.ndarray, px: float) -> None:
+    """Alpha-blend the Maqasi logo into the centre of the sheet (BGR image, in place)."""
+    logo = cv2.imread(str(LOGO), cv2.IMREAD_UNCHANGED)
+    if logo is None or logo.shape[2] != 4:
+        return
+    bw, bh = LOGO_BOX_MM[0] * px, LOGO_BOX_MM[1] * px
+    f = min(bw / logo.shape[1], bh / logo.shape[0])
+    logo = cv2.resize(logo, (int(logo.shape[1] * f), int(logo.shape[0] * f)), interpolation=cv2.INTER_AREA)
+    h, w = logo.shape[:2]
+    x0 = int(round(LOGO_CENTER_MM[0] * px - w / 2))
+    y0 = int(round(LOGO_CENTER_MM[1] * px - h / 2))
+    a = logo[:, :, 3:4].astype(np.float32) / 255
+    roi = img[y0:y0 + h, x0:x0 + w].astype(np.float32)
+    img[y0:y0 + h, x0:x0 + w] = (roi * (1 - a) + logo[:, :, :3].astype(np.float32) * a).round().astype(np.uint8)
+
+
+def render_sheet(dpi: int = 300, logo: bool = True) -> np.ndarray:
+    """The printable sheet as a BGR image at `dpi` (exactly A4 at that resolution), with the logo in the middle."""
     px = dpi / 25.4
     w, h = (int(round(v * px)) for v in SHEET_MM)
-    img = np.full((h, w), 255, np.uint8)
+    img = np.full((h, w, 3), 255, np.uint8)
     d = cv2.aruco.getPredefinedDictionary(DICT)
     side = int(round(MARKER_MM * px))
     for i, (x, y) in _marker_origins().items():
         m = cv2.aruco.generateImageMarker(d, i, side)
         x0, y0 = int(round(x * px)), int(round(y * px))
-        img[y0:y0 + side, x0:x0 + side] = m
-    # 100 mm check line with end ticks, centred
-    cx, cy = w // 2, h // 2
+        img[y0:y0 + side, x0:x0 + side] = m[:, :, None]
+    if logo:
+        _paste_logo(img, px)
+    # 100 mm check line with end ticks
+    cx, cy = w // 2, int(round(CHECK_LINE_Y_MM * px))
     half = int(round(CHECK_LINE_MM / 2 * px))
     t = max(2, int(round(0.4 * px)))
-    cv2.line(img, (cx - half, cy), (cx + half, cy), 0, t)
+    black = (0, 0, 0)
+    cv2.line(img, (cx - half, cy), (cx + half, cy), black, t)
     for x in (cx - half, cx + half):
-        cv2.line(img, (x, cy - int(4 * px)), (x, cy + int(4 * px)), 0, t)
+        cv2.line(img, (x, cy - int(4 * px)), (x, cy + int(4 * px)), black, t)
     font = cv2.FONT_HERSHEY_SIMPLEX
-    for text, dy in (("Maqasi scale sheet - print at 100% (actual size)", -int(12 * px)),
+    scale, thick = dpi / 190, max(1, dpi // 100)
+    for text, dy in (("Print at 100% (actual size)", -int(10 * px)),
                      ("This line must measure exactly 10.0 cm", int(12 * px))):
-        size = cv2.getTextSize(text, font, 1.6, 3)[0]
-        cv2.putText(img, text, (cx - size[0] // 2, cy + dy), font, 1.6, 0, 3, cv2.LINE_AA)
+        size = cv2.getTextSize(text, font, scale, thick)[0]
+        cv2.putText(img, text, (cx - size[0] // 2, cy + dy), font, scale, black, thick, cv2.LINE_AA)
     return img
 
 

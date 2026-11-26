@@ -15,7 +15,7 @@ DPI = 300
 def main(out_dir: str = "../docs") -> None:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    img = Image.fromarray(render_sheet(DPI))
+    img = Image.fromarray(render_sheet(DPI)[:, :, ::-1].copy())  # BGR -> RGB
     img.save(out / "maqasi-aruco-a4.pdf", resolution=DPI)
     img.save(out / "maqasi-aruco-a4.png", dpi=(DPI, DPI))
     print("wrote", out / "maqasi-aruco-a4.pdf")
