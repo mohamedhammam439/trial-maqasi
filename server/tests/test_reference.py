@@ -153,3 +153,42 @@ def test_api_bad_reference_is_422():
     img, _, _ = render_with_ref()
     assert post(img, reference="not json").status_code == 422
     assert post(img, reference=json.dumps({"type": "a4"})).status_code == 422
+
+
+# ------------------------------------------------------------ reference next to the garment
+def _sheet_touching_shirt():
+    # sheet the same colour as the shirt, 0.5 cm from its side: without exclusion the outlines merge
+    return render_with_ref(px_per_cm=25, ref=A4, ref_at=(36.5, 10.0), ref_angle_deg=90, ref_color=(60, 80, 140))
+
+
+def test_exclude_keeps_touching_sheet_out_of_garment():
+    img, s, corners = _sheet_touching_shirt()
+    merged = errors(measure(img, s))
+    assert max(merged.values()) > 5  # the scene really does break measurement without exclusion
+    assert max(errors(measure(img, s, exclude=[corners.tolist()])).values()) <= 0.5
+
+
+def test_api_rect_reference_is_excluded_automatically():
+    img, _, corners = _sheet_touching_shirt()
+    r = post(img, reference=json.dumps({"type": "a4", "corners": corners.tolist()}))
+    assert r.status_code == 200, r.text
+    m = r.json()["measurements_cm"]
+    assert all(abs(m[k] - GROUND_TRUTH[k]) <= 0.6 for k in CORE)
+
+
+def test_api_exclude_with_px_per_cm():
+    img, s, corners = _sheet_touching_shirt()
+    r = post(img, px_per_cm=str(s), exclude=json.dumps([corners.tolist()]))
+    assert r.status_code == 200, r.text
+    m = r.json()["measurements_cm"]
+    assert all(abs(m[k] - GROUND_TRUTH[k]) <= 0.5 for k in CORE)
+
+
+def test_captures_saved(tmp_path, monkeypatch):
+    from app import main
+    monkeypatch.setattr(main, "SAVE_CAPTURES", True)
+    monkeypatch.setattr(main, "CAPTURES", tmp_path)
+    img, s, _ = render_with_ref()
+    post(img, px_per_cm=str(s))
+    post(img, px_per_cm=str(s * 1.01))
+    assert len(list(tmp_path.glob("*.jpg"))) == 1 and len(list(tmp_path.glob("*.json"))) == 2
