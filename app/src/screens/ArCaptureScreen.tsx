@@ -336,7 +336,7 @@ export function ArCaptureScreen({
           : a4Err
             ? `مش قادرين نفحص الورقة: ${a4Err}`
             : !a4
-              ? 'بنفحص ورقة الـ A4…'
+              ? 'بنفحص الإضاءة والورقة والتيشرت…'
               : !a4.ok
                 ? a4.message
                 : busy
@@ -371,9 +371,12 @@ export function ArCaptureScreen({
         {error && <Text style={s.error}>{error}</Text>}
         <View style={s.checks}>
           <Text style={[s.check, level ? s.ok : s.no]}>{level ? '✓' : '!'} الميل ≤ {MAX_TILT_DEG}°</Text>
-          <Text style={[s.check, a4Ok ? s.ok : s.no]}>
-            {a4Ok ? '✓' : '!'} {sheet === 'aruco' ? 'ورقة ArUco' : 'ورقة A4'}{a4?.aspect_err != null ? ` (${(a4.aspect_err * 100).toFixed(1)}%)` : ''}
+          <Text style={[s.check, a4?.light?.ok ? s.ok : s.no]}>{a4?.light?.ok ? '✓' : '!'} الإضاءة</Text>
+          <Text style={[s.check, (a4?.sheet?.ok ?? a4Ok) ? s.ok : s.no]}>
+            {(a4?.sheet?.ok ?? a4Ok) ? '✓' : '!'} {sheet === 'aruco' ? 'ورقة ArUco' : 'ورقة A4'}
+            {a4?.aspect_err != null ? ` (${(a4.aspect_err * 100).toFixed(1)}%)` : ''}
           </Text>
+          <Text style={[s.check, a4?.garment?.ok ? s.ok : s.no]}>{a4?.garment?.ok ? '✓' : '!'} التيشرت مفرود</Text>
         </View>
         <Pressable
           onPress={take}

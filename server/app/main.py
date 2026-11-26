@@ -28,7 +28,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .measure import MeasureError, measure
-from . import aruco_sheet
+from . import aruco_sheet, precheck
 from .reference import KNOWN_RECTS, detect_rect, px_per_cm_from_rect, resolve as resolve_reference
 
 LIVE_ASPECT_TOL = 0.03
@@ -72,14 +72,8 @@ def health():
     return {"ok": True}
 
 
-@app.post("/check_a4")
-async def check_a4(image: UploadFile = File(...), kind: str = Form("a4")):
-    """Live check before the shot: is the scale sheet in view, flat, with the right proportions?
-    kind: "a4" (plain white sheet) or "aruco" (the printed marker sheet).
-    Returns {ok, found, aspect_err, px_per_cm, corners, message}; never saves the image."""
-    img = cv2.imdecode(np.frombuffer(await image.read(), np.uint8), cv2.IMREAD_COLOR)
-    if img is None:
-        raise HTTPException(400, "الصورة مش مقروءة.")
+def _sheet_check(img: np.ndarray, kind: str) -> dict:
+    """Is the scale sheet in view, flat, with the right proportions?"""
     flat = True
     try:
         if kind == "aruco":
@@ -101,6 +95,29 @@ async def check_a4(image: UploadFile = File(...), kind: str = Form("a4")):
         "message": f"{label} مظبوطة." if ok else
         f"{label} مش مفرودة كويس." if not flat else
         f"نسبة أبعاد {label} مش مظبوطة ({aspect_err * 100:.1f}%). افردها كويس واتأكد إنها كلها باينة.",
+    }
+
+
+@app.post("/check_a4")
+async def check_a4(image: UploadFile = File(...), kind: str = Form("a4")):
+    """Live check of a preview frame before the shot; the app only lets the user shoot when `ok`.
+    kind: "a4" (plain white sheet) or "aruco" (the printed marker sheet).
+    Returns the sheet check at the top level ({found, aspect_err, px_per_cm, corners}) plus
+    sheet/light/garment: {ok, message, ...}; ok = all three; message = the first thing to fix.
+    Never saves the image."""
+    img = cv2.imdecode(np.frombuffer(await image.read(), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "الصورة مش مقروءة.")
+    sheet = _sheet_check(img, kind)
+    light, garment = precheck.run(img, sheet["corners"])
+    failing = [c for c in (light, sheet, garment) if not c["ok"]]
+    return {
+        **sheet,
+        "ok": not failing,
+        "message": failing[0]["message"] if failing else "كله مظبوط.",
+        "sheet": {"ok": sheet["ok"], "message": sheet["message"]},
+        "light": light,
+        "garment": garment,
     }
 
 

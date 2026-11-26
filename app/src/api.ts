@@ -44,10 +44,16 @@ export type A4Check = {
   aspect_err: number | null;
   px_per_cm: number | null;
   corners: [number, number][] | null;
+  /** The first thing to fix, or "all good". */
   message: string;
+  /** Each check on its own (older servers send only the sheet fields). */
+  sheet?: { ok: boolean; message: string };
+  light?: { ok: boolean; message: string };
+  garment?: { ok: boolean; message: string };
 };
 
-/** Live check before the shot: is the A4 sheet in view with the right proportions? */
+/** Live check before the shot: light, the sheet (in view, right proportions) and the garment laid out flat.
+ *  `ok` only when all three pass. */
 /** kind: the plain white A4 or the printed ArUco sheet. */
 export async function checkA4(serverUrl: string, photoUri: string, kind: 'a4' | 'aruco' = 'a4'): Promise<A4Check> {
   const form = new FormData();

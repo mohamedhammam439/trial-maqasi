@@ -258,3 +258,37 @@ def test_check_aruco_live():
 def test_aruco_sheet_png():
     r = TestClient(app).get("/aruco-sheet.png")
     assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+
+
+# ------------------------------------------------------------ live light / garment checks
+def test_check_reports_light_and_garment_ok():
+    img, _, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
+    body = _check(img).json()
+    assert body["ok"] and body["light"]["ok"] and body["garment"]["ok"] and body["sheet"]["ok"], body
+
+
+def test_check_dark_blocks():
+    img, _, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
+    body = _check((img * 0.25).astype(np.uint8)).json()
+    assert not body["ok"] and not body["light"]["ok"]
+
+
+def test_check_blurry_blocks():
+    img, _, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
+    body = _check(cv2.GaussianBlur(img, (31, 31), 0)).json()
+    assert not body["ok"] and not body["light"]["ok"]
+
+
+def test_check_folded_sleeve_blocks():
+    img, _, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
+    h, w = img.shape[:2]
+    img[: int(h * 0.5), int(w * 0.73):] = (205, 208, 206)  # right sleeve gone (folded under)
+    body = _check(img).json()
+    assert not body["ok"] and not body["garment"]["ok"], body
+
+
+def test_check_feet_in_frame_still_ok():
+    img, _, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
+    img[-200:, 300:700] = (30, 30, 30)  # the user's feet at the bottom edge
+    body = _check(img).json()
+    assert body["light"]["ok"], body
