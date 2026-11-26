@@ -57,7 +57,7 @@ export default function App() {
         <ArHomeScreen onBack={() => setRoute({ name: 'home' })} onStart={() => setRoute({ name: 'arCapture' })} />
       )}
       {route.name === 'arCapture' && (
-        <ArCaptureScreen onBack={() => setRoute({ name: 'arHome' })} onShot={(shot) => setRoute({ name: 'arResult', shot })} />
+        <ArCaptureScreen serverUrl={serverUrl} onBack={() => setRoute({ name: 'arHome' })} onShot={(shot) => setRoute({ name: 'arResult', shot })} />
       )}
       {route.name === 'arResult' && (
         <ArResultScreen

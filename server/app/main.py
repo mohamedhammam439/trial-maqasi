@@ -28,7 +28,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .measure import MeasureError, measure
-from .reference import resolve as resolve_reference
+from .reference import KNOWN_RECTS, detect_rect, px_per_cm_from_rect, resolve as resolve_reference
+
+LIVE_ASPECT_TOL = 0.03  # live A4 check: the sheet's long/short side ratio must be within 3% of 29.7/21
 
 CAPTURES = Path(__file__).resolve().parent.parent / "captures"
 SAVE_CAPTURES = os.environ.get("MAQASI_SAVE_CAPTURES", "1") != "0"
@@ -58,6 +60,29 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.post("/check_a4")
+async def check_a4(image: UploadFile = File(...)):
+    """Live check before the shot: is a flat A4 sheet in view with the right proportions?
+    Returns {ok, found, aspect_err, px_per_cm, corners, message}; never saves the image."""
+    img = cv2.imdecode(np.frombuffer(await image.read(), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "الصورة مش مقروءة.")
+    long_cm, short_cm = KNOWN_RECTS["a4"]
+    try:
+        corners = detect_rect(img, long_cm, short_cm)
+        px_per_cm, aspect_err = px_per_cm_from_rect(corners, long_cm, short_cm)
+    except MeasureError:
+        return {"ok": False, "found": False, "aspect_err": None, "px_per_cm": None, "corners": None,
+                "message": "مش لاقيين ورقة الـ A4. حطها مفرودة في نص التيشرت."}
+    ok = aspect_err <= LIVE_ASPECT_TOL
+    return {
+        "ok": ok, "found": True, "aspect_err": round(aspect_err, 4), "px_per_cm": round(px_per_cm, 3),
+        "corners": np.asarray(corners).round(1).tolist(),
+        "message": "ورقة الـ A4 مظبوطة." if ok else
+        f"نسبة أبعاد الورقة مش مظبوطة ({aspect_err * 100:.1f}%). افردها كويس واتأكد إنها كلها باينة.",
+    }
 
 
 @app.post("/measure")

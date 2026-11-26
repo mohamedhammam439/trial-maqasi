@@ -192,3 +192,29 @@ def test_captures_saved(tmp_path, monkeypatch):
     post(img, px_per_cm=str(s))
     post(img, px_per_cm=str(s * 1.01))
     assert len(list(tmp_path.glob("*.jpg"))) == 1 and len(list(tmp_path.glob("*.json"))) == 2
+
+
+# ------------------------------------------------------------ live A4 check
+def _check(img):
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return TestClient(app).post("/check_a4", files={"image": ("t.jpg", buf.tobytes(), "image/jpeg")})
+
+
+def test_check_a4_ok_on_shirt():
+    img, s, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
+    body = _check(img).json()
+    assert body["ok"] and body["found"], body
+    assert abs(body["px_per_cm"] / s - 1) < 0.02
+
+
+def test_check_a4_missing():
+    img, _, _ = render_with_ref(px_per_cm=12, size=(1080, 1440))
+    body = _check(img).json()
+    assert not body["ok"] and not body["found"]
+
+
+def test_check_a4_wrong_aspect():
+    # a 21 x 27 cm sheet (folded / partly hidden): found within the 8% detection tolerance, but fails the live 3% check
+    img, _, _ = render_with_ref(px_per_cm=12, ref=(27.5, 21.0), ref_at=(0.0, 0.0), size=(1080, 1440))
+    body = _check(img).json()
+    assert body["found"] and not body["ok"], body

@@ -43,7 +43,7 @@ function garmentCenter(r: MeasureResponse) {
  *  - AR only: the AR floor scale.
  *  - A4 only: the sheet in the photo (found automatically by the server).
  *  - AR + A4: A4's absolute scale, moved from the sheet to the garment with AR's perspective. */
-/** Largest AR vs A4 scale gap (fraction) before the user is asked to reshoot. */
+/** AR vs A4 scale gap (fraction) above which the gap is shown, for the record. */
 const AR_A4_MAX_GAP = 0.04;
 
 export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
@@ -178,11 +178,11 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
           </Text>
         )}
         {arA4Gap != null && Math.abs(arA4Gap) > AR_A4_MAX_GAP && (
-          <Text style={s.warn}>
-            الـ AR والـ A4 مختلفين {(arA4Gap * 100).toFixed(1)}%، وده كتير. غالباً الورقة مش مفرودة أو حوافها مش واضحة، أو الـ AR
-            غلط. صوّر تاني.
+          <Text style={s.sub}>
+            الـ AR مختلف عن الـ A4 بـ {(arA4Gap * 100).toFixed(1)}%. القياس بيعتمد على الـ A4، فده مش بيأثر على النتيجة.
           </Text>
         )}
+        {shot.arProblem && <Text style={s.sub}>ملاحظة على الـ AR: {shot.arProblem}</Text>}
         <Text style={s.sub}>
           بُعد الموبايل عن الأرض: {shot.ar.distanceCm != null ? `${shot.ar.distanceCm} سم` : 'مش معروف'} · الميل {shot.tiltDeg}° · ثبات القياس ±
           {(shot.ar.spread * 100).toFixed(1)}%
