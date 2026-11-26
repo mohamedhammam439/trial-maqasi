@@ -15,9 +15,10 @@ MIN_SHARPNESS = 12.0         # variance of the Laplacian at 800 px wide: below =
 MAX_SHADOW = 0.45            # (brightest - darkest sector) / mean of the floor in a ring just around the garment
 
 # ---- garment
-MAX_ASYMMETRY = 0.12         # |left area - right area| / total, about the body's centre line
-MAX_SLEEVE_DIFF = 0.15       # left vs right sleeve reach from the centre line
-MAX_SIDE_WOBBLE = 0.06       # std / mean of the body width over the lower body (folded or bunched sides)
+MAX_ASYMMETRY = 0.06         # |left area - right area| / total, about the body's centre line
+MAX_SLEEVE_DIFF = 0.08       # left vs right sleeve reach from the centre line
+MAX_SIDE_WOBBLE = 0.04       # std / mean of the body width over the lower body (folded or bunched sides)
+# Calibrated 2026-11-26 on real shots (navy tee on a beige rug): asymmetry <= 0.004, sleeve <= 0.009, wobble 0.003, shadow <= 0.13.
 
 
 def light_check(img_bgr: np.ndarray, sheet: list | None = None, garment_mask: np.ndarray | None = None) -> dict:
