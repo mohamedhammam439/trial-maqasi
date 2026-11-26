@@ -21,6 +21,8 @@ export type ArTestRecord = {
   measuredFused?: Record<string, number> | null;
   measuredTape: Record<string, number> | null;
   truth: Record<string, number | null>;
+  /** Shoulder seam point placed by hand for the sleeve (photo px); null/absent = server's guess. */
+  sleeveStart?: { x: number; y: number } | null;
   note: string;
 };
 

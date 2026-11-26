@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Image, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, Line as SvgLine, Polygon } from 'react-native-svg';
 
 import { measure } from '../api';
 import { fitScaleModel, fuseA4WithAr, type FusedScale } from '../arScale';
 import { saveArRecord } from '../arStorage';
 import { C, MEASUREMENT_LABELS } from '../theme';
-import type { MeasureResponse } from '../types';
+import type { MeasureResponse, Pt } from '../types';
 import type { ArShot } from './ArCaptureScreen';
 
 type Props = { shot: ArShot; serverUrl: string; onBack: () => void; onDone: () => void };
@@ -30,6 +30,17 @@ function DiffText({ value, truth }: { value: number | undefined; truth: number |
       )}
     </View>
   );
+}
+
+const SLEEVE = 'sleeve_length';
+
+/** Measurements with the sleeve re-computed from a hand-placed shoulder point (photo px). */
+function withSleeve(r: MeasureResponse | null, start: Pt | null): Record<string, number> | undefined {
+  if (!r) return undefined;
+  const ln = r.lines.find((l) => l.name === SLEEVE);
+  if (!start || !ln) return r.measurements_cm;
+  const cm = Math.hypot(ln.b.x - start.x, ln.b.y - start.y) / r.px_per_cm;
+  return { ...r.measurements_cm, [SLEEVE]: Math.round(cm * 10) / 10 };
 }
 
 /** Centre of the garment from the measurement lines (photo px). */
@@ -58,6 +69,9 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /** Shoulder seam point placed by hand (photo px); null = the server's guess. */
+  const [sleeveStart, setSleeveStart] = useState<Pt | null>(null);
+  const [dragging, setDragging] = useState(false);
   const boxH = boxW ? (boxW * shot.height) / shot.width : 0;
   const k = boxW ? shot.width / boxW : 1; // display px -> image px
 
@@ -122,9 +136,10 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
       scaleDiffPct: null,
       a4: a4Res ? { pxPerCm: a4Res.px_per_cm, detected: !!a4Res.reference?.detected } : null,
       fused,
-      measuredAr: arRes.measurements_cm,
-      measuredA4: a4Res?.measurements_cm ?? null,
-      measuredFused: fusedRes?.measurements_cm ?? null,
+      measuredAr: withSleeve(arRes, sleeveStart)!,
+      measuredA4: withSleeve(a4Res, sleeveStart) ?? null,
+      measuredFused: withSleeve(fusedRes, sleeveStart) ?? null,
+      sleeveStart,
       measuredTape: null,
       truth: parsed,
       note,
@@ -137,9 +152,42 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   const sheetCorners = a4Res?.reference?.corners;
   /** AR vs A4 scale on the same photo. They should agree within a few %; a bigger gap means one of them is off. */
   const arA4Gap = a4Res ? shot.ar.pxPerCm / a4Res.px_per_cm - 1 : null;
+  const sleeveLine = shown?.lines.find((l) => l.name === SLEEVE);
+  const handle = sleeveStart ?? sleeveLine?.a ?? null;
+
+  // Drag the shoulder end of the sleeve line onto the seam. Positions are photo px; k converts from screen.
+  const drag = useRef({ start: { x: 0, y: 0 }, k: 1, w: 0, h: 0 });
+  drag.current.k = k;
+  drag.current.w = shot.width;
+  drag.current.h = shot.height;
+  const handleRef = useRef<Pt | null>(null);
+  handleRef.current = handle;
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: () => {
+          if (handleRef.current) drag.current.start = handleRef.current;
+          setDragging(true);
+        },
+        onPanResponderMove: (_, g) => {
+          const d = drag.current;
+          setSleeveStart({
+            x: Math.min(d.w, Math.max(0, d.start.x + g.dx * d.k)),
+            y: Math.min(d.h, Math.max(0, d.start.y + g.dy * d.k)),
+          });
+        },
+        onPanResponderRelease: () => setDragging(false),
+        onPanResponderTerminate: () => setDragging(false),
+      }),
+    [],
+  );
+  const shownCm = (r: MeasureResponse | null, key: string) => withSleeve(r, sleeveStart)?.[key];
 
   return (
-    <ScrollView style={s.root} contentContainerStyle={{ padding: 16, paddingTop: 56, gap: 14 }}>
+    <ScrollView scrollEnabled={!dragging} style={s.root} contentContainerStyle={{ padding: 16, paddingTop: 56, gap: 14 }}>
       <View style={s.header}>
         <Pressable onPress={onBack} style={s.back} accessibilityLabel="رجوع">
           <Text style={{ fontSize: 18, color: C.text }}>›</Text>
@@ -180,19 +228,35 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
               {shown?.lines.map((ln) => (
                 <SvgLine
                   key={ln.name}
-                  x1={ln.a.x / k} y1={ln.a.y / k} x2={ln.b.x / k} y2={ln.b.y / k}
+                  x1={(ln.name === SLEEVE && handle ? handle : ln.a).x / k}
+                  y1={(ln.name === SLEEVE && handle ? handle : ln.a).y / k}
+                  x2={ln.b.x / k} y2={ln.b.y / k}
                   stroke={ln.confidence === 'high' ? C.petrol : C.warn}
                   strokeWidth={3}
                   strokeDasharray={ln.confidence === 'high' ? undefined : '6 4'}
                 />
               ))}
-              {shown?.lines.flatMap((ln) => [ln.a, ln.b].map((p, i) => (
+              {shown?.lines.flatMap((ln) => [ln.name === SLEEVE && handle ? handle : ln.a, ln.b].map((p, i) => (
                 <Circle key={`${ln.name}${i}`} cx={p.x / k} cy={p.y / k} r={5} fill={C.gold} stroke="#FFFFFF" strokeWidth={1.5} />
               )))}
             </Svg>
+            {handle && (
+              <View
+                {...pan.panHandlers}
+                accessibilityLabel="نقطة خياطة الكتف"
+                style={[s.handle, { left: handle.x / k - 22, top: handle.y / k - 22 }]}
+              >
+                <View style={[s.handleDot, dragging && { transform: [{ scale: 1.3 }] }]} />
+              </View>
+            )}
           </View>
         )}
       </View>
+      {handle && (
+        <Text style={s.sub}>
+          الكم بيتقاس من خياطة الكتف لآخر الكم من فوق. لو النقطة البرتقالي مش على الخياطة، اسحبها عليها والكم هيتحسب تاني.
+        </Text>
+      )}
 
       {error && <Text style={s.error}>{error}</Text>}
       {a4Error && <Text style={s.warn}>ورقة الـ A4: {a4Error}</Text>}
@@ -212,9 +276,9 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
             const t = num(truth[key]);
             return (
               <View key={key} style={s.row}>
-                <DiffText value={arRes.measurements_cm[key]} truth={t} />
-                <DiffText value={a4Res?.measurements_cm[key]} truth={t} />
-                <DiffText value={fusedRes?.measurements_cm[key]} truth={t} />
+                <DiffText value={shownCm(arRes, key)} truth={t} />
+                <DiffText value={shownCm(a4Res, key)} truth={t} />
+                <DiffText value={shownCm(fusedRes, key)} truth={t} />
                 <TextInput
                   value={truth[key] ?? ''}
                   onChangeText={(v) => setTruth((p) => ({ ...p, [key]: v }))}
@@ -259,6 +323,8 @@ const s = StyleSheet.create({
   diff: { fontSize: 11, fontWeight: '600' },
   input: { flex: 1, height: 42, marginHorizontal: 3, borderRadius: 10, borderWidth: 1.5, borderColor: C.borderStrong, textAlign: 'center', fontSize: 15, color: C.text, backgroundColor: C.surface },
   note: { minHeight: 60, borderRadius: 14, borderWidth: 1.5, borderColor: C.borderStrong, backgroundColor: C.surface, padding: 12, textAlign: 'right', color: C.text },
+  handle: { position: 'absolute', width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  handleDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: C.warn, borderWidth: 3, borderColor: '#FFFFFF' },
   btn: { height: 54, borderRadius: 16, backgroundColor: C.petrol, alignItems: 'center', justifyContent: 'center' },
   btnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 });
