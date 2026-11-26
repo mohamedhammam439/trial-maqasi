@@ -60,6 +60,9 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   const [saved, setSaved] = useState(false);
   const boxH = boxW ? (boxW * shot.height) / shot.width : 0;
   const k = boxW ? shot.width / boxW : 1; // display px -> image px
+  // Sleeve set by hand (photo px): from the shoulder seam on top of the sleeve to the end of the sleeve.
+  const [sleeve, setSleeve] = useState<{ a: { x: number; y: number }; b: { x: number; y: number } } | null>(null);
+  const [placing, setPlacing] = useState<'a' | 'b' | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -102,6 +105,23 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
 
   const keys = Object.keys(arRes?.measurements_cm ?? {});
 
+  // Start the hand-set sleeve from the server's guess, once there is one.
+  const guess = (fusedRes ?? a4Res ?? arRes)?.lines.find((l) => l.name === 'sleeve_length');
+  const sl = sleeve ?? (guess ? { a: guess.a, b: guess.b } : null);
+  const sleevePx = sl ? Math.hypot(sl.b.x - sl.a.x, sl.b.y - sl.a.y) : null;
+  /** A method's measurements, with the sleeve replaced by the hand-set one (same scale). */
+  const withSleeve = (r: MeasureResponse | null): Record<string, number> | undefined => {
+    if (!r) return undefined;
+    if (!sleeve || sleevePx == null) return r.measurements_cm;
+    return { ...r.measurements_cm, sleeve_length: Math.round((sleevePx / r.px_per_cm) * 10) / 10 };
+  };
+  const onImagePress = (x: number, y: number) => {
+    if (!placing || !sl) return;
+    const p = { x: x * k, y: y * k };
+    setSleeve(placing === 'a' ? { a: p, b: sl.b } : { a: sl.a, b: p });
+    setPlacing(null);
+  };
+
   const save = async () => {
     if (!arRes) return;
     const parsed: Record<string, number | null> = {};
@@ -122,12 +142,12 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
       scaleDiffPct: null,
       a4: a4Res ? { pxPerCm: a4Res.px_per_cm, detected: !!a4Res.reference?.detected } : null,
       fused,
-      measuredAr: arRes.measurements_cm,
-      measuredA4: a4Res?.measurements_cm ?? null,
-      measuredFused: fusedRes?.measurements_cm ?? null,
+      measuredAr: withSleeve(arRes)!,
+      measuredA4: withSleeve(a4Res) ?? null,
+      measuredFused: withSleeve(fusedRes) ?? null,
       measuredTape: null,
       truth: parsed,
-      note,
+      note: sleeve ? `${note}${note ? ' · ' : ''}الكم متحدد باليد` : note,
     });
     setSaved(true);
   };
@@ -171,13 +191,24 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
 
       <View style={{ width: '100%' }} onLayout={(e) => setBoxW(e.nativeEvent.layout.width)}>
         {boxW > 0 && (
-          <View style={{ width: boxW, height: boxH }}>
+          <Pressable
+            style={{ width: boxW, height: boxH }}
+            disabled={!placing}
+            onPress={(e) => onImagePress(e.nativeEvent.locationX, e.nativeEvent.locationY)}
+          >
             <Image source={{ uri: shot.uri }} style={{ width: boxW, height: boxH, borderRadius: 16 }} />
             <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
               {sheetCorners && (
                 <Polygon points={sheetCorners.map((c) => `${c[0] / k},${c[1] / k}`).join(' ')} fill="none" stroke={C.gold} strokeWidth={2.5} />
               )}
-              {shown?.lines.map((ln) => (
+              {sl && (
+                <>
+                  <SvgLine x1={sl.a.x / k} y1={sl.a.y / k} x2={sl.b.x / k} y2={sl.b.y / k} stroke={sleeve ? C.petrol : C.warn} strokeWidth={3} />
+                  <Circle cx={sl.a.x / k} cy={sl.a.y / k} r={placing === 'a' ? 9 : 6} fill="#FFFFFF" stroke={C.petrol} strokeWidth={2.5} />
+                  <Circle cx={sl.b.x / k} cy={sl.b.y / k} r={placing === 'b' ? 9 : 6} fill={C.petrol} stroke="#FFFFFF" strokeWidth={2} />
+                </>
+              )}
+              {shown?.lines.filter((ln) => ln.name !== 'sleeve_length').map((ln) => (
                 <SvgLine
                   key={ln.name}
                   x1={ln.a.x / k} y1={ln.a.y / k} x2={ln.b.x / k} y2={ln.b.y / k}
@@ -186,13 +217,33 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
                   strokeDasharray={ln.confidence === 'high' ? undefined : '6 4'}
                 />
               ))}
-              {shown?.lines.flatMap((ln) => [ln.a, ln.b].map((p, i) => (
+              {shown?.lines.filter((ln) => ln.name !== 'sleeve_length').flatMap((ln) => [ln.a, ln.b].map((p, i) => (
                 <Circle key={`${ln.name}${i}`} cx={p.x / k} cy={p.y / k} r={5} fill={C.gold} stroke="#FFFFFF" strokeWidth={1.5} />
               )))}
             </Svg>
-          </View>
+          </Pressable>
         )}
       </View>
+
+      {sl && (
+        <View style={s.card}>
+          <Text style={s.label}>طول الكم: من خياطة الكتف فوق الكم (النقطة البيضا) لآخر الكم (النقطة الغامقة).</Text>
+          <View style={s.sleeveRow}>
+            <Pressable onPress={() => setPlacing(placing === 'a' ? null : 'a')} style={[s.chip, placing === 'a' && s.chipOn]}>
+              <Text style={[s.chipText, placing === 'a' && { color: '#FFFFFF' }]}>حدّد الخياطة</Text>
+            </Pressable>
+            <Pressable onPress={() => setPlacing(placing === 'b' ? null : 'b')} style={[s.chip, placing === 'b' && s.chipOn]}>
+              <Text style={[s.chipText, placing === 'b' && { color: '#FFFFFF' }]}>حدّد آخر الكم</Text>
+            </Pressable>
+            {sleeve && (
+              <Pressable onPress={() => setSleeve(null)} style={s.chip}>
+                <Text style={s.chipText}>رجّع تخمين السيرفر</Text>
+              </Pressable>
+            )}
+          </View>
+          {placing && <Text style={s.sub}>اضغط على الصورة في المكان الصح.</Text>}
+        </View>
+      )}
 
       {error && <Text style={s.error}>{error}</Text>}
       {a4Error && <Text style={s.warn}>ورقة الـ A4: {a4Error}</Text>}
@@ -212,9 +263,9 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
             const t = num(truth[key]);
             return (
               <View key={key} style={s.row}>
-                <DiffText value={arRes.measurements_cm[key]} truth={t} />
-                <DiffText value={a4Res?.measurements_cm[key]} truth={t} />
-                <DiffText value={fusedRes?.measurements_cm[key]} truth={t} />
+                <DiffText value={withSleeve(arRes)?.[key]} truth={t} />
+                <DiffText value={withSleeve(a4Res)?.[key]} truth={t} />
+                <DiffText value={withSleeve(fusedRes)?.[key]} truth={t} />
                 <TextInput
                   value={truth[key] ?? ''}
                   onChangeText={(v) => setTruth((p) => ({ ...p, [key]: v }))}
@@ -259,6 +310,10 @@ const s = StyleSheet.create({
   diff: { fontSize: 11, fontWeight: '600' },
   input: { flex: 1, height: 42, marginHorizontal: 3, borderRadius: 10, borderWidth: 1.5, borderColor: C.borderStrong, textAlign: 'center', fontSize: 15, color: C.text, backgroundColor: C.surface },
   note: { minHeight: 60, borderRadius: 14, borderWidth: 1.5, borderColor: C.borderStrong, backgroundColor: C.surface, padding: 12, textAlign: 'right', color: C.text },
+  sleeveRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8 },
+  chip: { height: 38, paddingHorizontal: 14, borderRadius: 19, borderWidth: 1.5, borderColor: C.petrol, alignItems: 'center', justifyContent: 'center' },
+  chipOn: { backgroundColor: C.petrol },
+  chipText: { color: C.petrol, fontSize: 13, fontWeight: '600' },
   btn: { height: 54, borderRadius: 16, backgroundColor: C.petrol, alignItems: 'center', justifyContent: 'center' },
   btnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 });
