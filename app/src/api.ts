@@ -38,6 +38,25 @@ export async function measure(
   return body as MeasureResponse;
 }
 
+export type A4Check = {
+  ok: boolean;
+  found: boolean;
+  aspect_err: number | null;
+  px_per_cm: number | null;
+  corners: [number, number][] | null;
+  message: string;
+};
+
+/** Live check before the shot: is the A4 sheet in view with the right proportions? */
+export async function checkA4(serverUrl: string, photoUri: string): Promise<A4Check> {
+  const form = new FormData();
+  const file = new File(photoUri);
+  form.append('image', file, file.name || 'check.jpg');
+  const res = await fetch(`${serverUrl.replace(/\/$/, '')}/check_a4`, { method: 'POST', body: form });
+  if (!res.ok) throw new Error(`السيرفر رد بخطأ ${res.status}`);
+  return (await res.json()) as A4Check;
+}
+
 export async function ping(serverUrl: string): Promise<boolean> {
   try {
     const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`);
