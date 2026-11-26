@@ -218,3 +218,43 @@ def test_check_a4_wrong_aspect():
     img, _, _ = render_with_ref(px_per_cm=12, ref=(27.5, 21.0), ref_at=(0.0, 0.0), size=(1080, 1440))
     body = _check(img).json()
     assert body["found"] and not body["ok"], body
+
+
+# ------------------------------------------------------------ ArUco sheet
+from tests.synth import render_with_aruco  # noqa: E402
+
+
+@pytest.mark.parametrize("angle,tilt", [(0, 0), (12, 0), (0, 3)])
+def test_aruco_scale(angle, tilt):
+    img, s, _ = render_with_aruco(ref_angle_deg=angle, tilt_deg=tilt)
+    ref = resolve({"type": "aruco"}, img)
+    assert ref.type == "aruco" and ref.detected
+    assert abs(ref.px_per_cm / s - 1) < 0.006
+
+
+def test_aruco_missing_fails_cleanly():
+    img, _, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
+    with pytest.raises(MeasureError):
+        resolve({"type": "aruco"}, img)
+
+
+def test_api_aruco_on_shirt_measures():
+    img, s, _ = render_with_aruco(px_per_cm=12)
+    r = post(img, reference=json.dumps({"type": "aruco"}))
+    assert r.status_code == 200, r.text
+    m = r.json()["measurements_cm"]
+    assert all(abs(m[k] - GROUND_TRUTH[k]) <= 1.0 for k in CORE), m
+
+
+def test_check_aruco_live():
+    img, s, _ = render_with_aruco()
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    body = TestClient(app).post("/check_a4", files={"image": ("t.jpg", buf.tobytes(), "image/jpeg")},
+                                data={"kind": "aruco"}).json()
+    assert body["ok"] and body["found"], body
+    assert abs(body["px_per_cm"] / s - 1) < 0.01
+
+
+def test_aruco_sheet_png():
+    r = TestClient(app).get("/aruco-sheet.png")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"

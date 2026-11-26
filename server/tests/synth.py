@@ -93,3 +93,20 @@ def render_with_ref(px_per_cm=30.0, tilt_deg=0.0, rotate_deg=0.0, noise=6.0, lig
     img += rng.normal(0, noise, img.shape)
     img = cv2.GaussianBlur(np.clip(img, 0, 255).astype(np.uint8), (5, 5), 0)
     return img, px_per_cm, ref_px
+
+
+def render_with_aruco(px_per_cm=12.0, ref_at=(0.0, 0.0), ref_angle_deg=0.0, tilt_deg=0.0, size=(1080, 1440), seed=0):
+    """Shirt photo with the printed ArUco sheet (app/aruco_sheet.py) lying flat at ref_at.
+    Returns (bgr_image, true px_per_cm at the shirt centre, paper corners in image px)."""
+    from app import aruco_sheet
+
+    w_cm, h_cm = (v / 10 for v in aruco_sheet.SHEET_MM)
+    img, s, paper = render_with_ref(px_per_cm=px_per_cm, tilt_deg=tilt_deg, size=size, seed=seed,
+                                    ref=(w_cm, h_cm), ref_at=ref_at, ref_angle_deg=ref_angle_deg)
+    sheet = aruco_sheet.render_sheet(dpi=150)
+    sh, sw = sheet.shape
+    H = cv2.getPerspectiveTransform(np.float32([(0, 0), (sw, 0), (sw, sh), (0, sh)]), paper.astype(np.float32))
+    warped = cv2.warpPerspective(sheet, H, (size[0], size[1]), flags=cv2.INTER_AREA, borderValue=255)
+    warped = cv2.GaussianBlur(warped, (3, 3), 0).astype(np.float32) / 255
+    out = (img.astype(np.float32) * warped[:, :, None]).clip(0, 255).astype(np.uint8)
+    return out, s, paper

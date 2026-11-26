@@ -48,10 +48,12 @@ export type A4Check = {
 };
 
 /** Live check before the shot: is the A4 sheet in view with the right proportions? */
-export async function checkA4(serverUrl: string, photoUri: string): Promise<A4Check> {
+/** kind: the plain white A4 or the printed ArUco sheet. */
+export async function checkA4(serverUrl: string, photoUri: string, kind: 'a4' | 'aruco' = 'a4'): Promise<A4Check> {
   const form = new FormData();
   const file = new File(photoUri);
   form.append('image', file, file.name || 'check.jpg');
+  form.append('kind', kind);
   const res = await fetch(`${serverUrl.replace(/\/$/, '')}/check_a4`, { method: 'POST', body: form });
   if (!res.ok) throw new Error(`السيرفر رد بخطأ ${res.status}`);
   return (await res.json()) as A4Check;
