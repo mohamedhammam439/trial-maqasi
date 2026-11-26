@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, PixelRatio, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { arScaleProblem, gridFractions, median, phoneMoved, scaleFromFloorSamples, type ArScale, type FloorSample } from '../arScale';
+import { loadArTargetHeight, saveArTargetHeight } from '../arStorage';
 import { C } from '../theme';
 import { MAX_TILT_DEG, useTiltDeg } from './CaptureScreen';
 
@@ -37,7 +38,11 @@ export type ArDebug = {
   gridPoints: number;
 };
 
-const FLOOR_TYPES = ['ExistingPlaneUsingExtent', 'ExistingPlane', 'EstimatedHorizontalPlane'];
+/** The phone must be within this many cm of the chosen height to take the shot (like the tilt limit). */
+export const HEIGHT_TOL_CM = 3;
+const HEIGHT_CHOICES = [120, 130, 140, 150, 160];
+
+const FLOOR_TYPES =['ExistingPlaneUsingExtent', 'ExistingPlane', 'EstimatedHorizontalPlane'];
 
 type SceneHooks = { onScene: (s: ViroARScene | null) => void; onTracking: (normal: boolean) => void };
 
@@ -80,6 +85,18 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
   const tilt = useTiltDeg();
   const level = tilt <= MAX_TILT_DEG;
   const pr = PixelRatio.get();
+  const [targetCm, setTargetCm] = useState<number | null>(null);
+  useEffect(() => {
+    loadArTargetHeight().then(setTargetCm);
+  }, []);
+  const chooseTarget = (cm: number) => {
+    setTargetCm(cm);
+    saveArTargetHeight(cm);
+  };
+  const heightOff = targetCm != null && floorCm != null && floorCm > 0 ? floorCm - targetCm : null;
+  // floorCm === 0 means the floor is found but AR can't report the camera height: don't block on it.
+  const heightUnknown = targetCm != null && floorCm === 0;
+  const atHeight = heightUnknown || (heightOff != null && Math.abs(heightOff) <= HEIGHT_TOL_CM);
 
   useEffect(() => {
     isARSupportedOnDevice()
@@ -143,7 +160,7 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
     return out;
   };
 
-  const ready = supported && tracking && floorCm != null && level && !busy;
+  const ready = supported && tracking && floorCm != null && level && atHeight && !busy;
 
   const take = async () => {
     if (!ready || !navRef.current) return;
@@ -225,7 +242,15 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
       ? 'لسه بندوّر على الأرضية… حرّك الموبايل شوية'
       : !level
         ? `ميّل الموبايل لحد ما يبقى موازي للأرض (${tilt.toFixed(1)}°)`
-        : `الأرضية متحددة — على بعد ${floorCm} سم. صوّر`;
+        : targetCm == null
+          ? `اختار ارتفاع ثابت للموبايل من تحت (دلوقتي ${floorCm} سم)`
+          : heightUnknown
+            ? 'الـ AR مش قادر يقيس ارتفاع الموبايل — صوّر من نفس الارتفاع بتاع كل مرة'
+            : heightOff == null
+            ? 'لسه بنقيس ارتفاع الموبايل… ثبّته شوية'
+            : !atHeight
+              ? `${heightOff > 0 ? 'نزّل' : 'ارفع'} الموبايل ${Math.abs(heightOff)} سم (دلوقتي ${floorCm} · المطلوب ${targetCm})`
+              : `الارتفاع ${floorCm} سم والميل ${tilt.toFixed(1)}° — صوّر`;
 
   return (
     <View style={s.root}>
@@ -253,6 +278,21 @@ export function ArCaptureScreen({ onShot, onBack }: { onShot: (s: ArShot) => voi
 
       <View style={s.footer} pointerEvents="box-none">
         {error && <Text style={s.error}>{error}</Text>}
+        <View style={s.heightRow}>
+          {floorCm != null && floorCm > 0 && (
+            <Pressable onPress={() => chooseTarget(floorCm)} style={s.chip} accessibilityLabel="ثبّت الارتفاع الحالي">
+              <Text style={s.chipText}>ثبّت الحالي</Text>
+            </Pressable>
+          )}
+          {HEIGHT_CHOICES.map((cm) => (
+            <Pressable key={cm} onPress={() => chooseTarget(cm)} style={[s.chip, targetCm === cm && s.chipOn]} accessibilityLabel={`ارتفاع ${cm} سم`}>
+              <Text style={[s.chipText, targetCm === cm && { color: C.text }]}>{cm}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {targetCm != null && !HEIGHT_CHOICES.includes(targetCm) && (
+          <Text style={s.pillText}>الارتفاع المطلوب: {targetCm} سم ±{HEIGHT_TOL_CM}</Text>
+        )}
         <Pressable
           onPress={take}
           disabled={!ready}
@@ -279,6 +319,10 @@ const s = StyleSheet.create({
   error: { color: C.bad, backgroundColor: C.badBg, padding: 12, borderRadius: 12, textAlign: 'right', alignSelf: 'stretch' },
   shutter: { width: 76, height: 76, borderRadius: 38, borderWidth: 4, alignItems: 'center', justifyContent: 'center' },
   shutterInner: { width: 60, height: 60, borderRadius: 30 },
-  ghost: { height: 44, alignItems: 'center', justifyContent: 'center' },
+  heightRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 6 },
+  chip: { minWidth: 44, height: 36, paddingHorizontal: 10, borderRadius: 18, backgroundColor: 'rgba(20,18,16,0.75)', alignItems: 'center', justifyContent: 'center' },
+  chipOn: { backgroundColor: '#FFFFFF' },
+  chipText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
+  ghost: { height: 44,alignItems: 'center', justifyContent: 'center' },
   ghostText: { color: C.goldText, fontSize: 15, fontWeight: '600' },
 });

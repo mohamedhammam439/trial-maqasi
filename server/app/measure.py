@@ -53,8 +53,14 @@ class Result:
 
 
 # ---------------------------------------------------------------- segmentation
-def segment(img_bgr: np.ndarray) -> tuple[np.ndarray, float]:
-    """Return (mask at work resolution, work_scale = work_px / original_px)."""
+EXCLUDE_GROW = 1.08          # exclusion polygons are grown by this factor around their centre ...
+EXCLUDE_PAD_PX = 6           # ... plus this many work px, so the object's shadow goes too
+
+
+def segment(img_bgr: np.ndarray, exclude: list | None = None) -> tuple[np.ndarray, float]:
+    """Return (mask at work resolution, work_scale = work_px / original_px).
+    exclude: polygons (original image px) to cut out of the mask, e.g. the A4 sheet next to the garment,
+    so a reference lying close to the garment can't merge into its outline."""
     h, w = img_bgr.shape[:2]
     s = min(1.0, WORK_MAX_SIDE / max(h, w))
     small = cv2.resize(img_bgr, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else img_bgr.copy()
@@ -80,6 +86,13 @@ def segment(img_bgr: np.ndarray) -> tuple[np.ndarray, float]:
 
     k = max(3, int(min(small.shape[:2]) * 0.006)) | 1
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    for poly in exclude or []:
+        p = np.asarray(poly, np.float64).reshape(-1, 2) * s
+        c = p.mean(axis=0)
+        d = p - c
+        n = np.linalg.norm(d, axis=1, keepdims=True)
+        grown = c + d * EXCLUDE_GROW + d / np.maximum(n, 1e-6) * EXCLUDE_PAD_PX
+        cv2.fillPoly(mask, [np.round(grown).astype(np.int32)], 0)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
@@ -230,12 +243,12 @@ def px_per_cm_from_calibration(p1: tuple[float, float], p2: tuple[float, float],
     return d / cm
 
 
-def measure(img_bgr: np.ndarray, px_per_cm: float, garment: str = "tshirt") -> Result:
+def measure(img_bgr: np.ndarray, px_per_cm: float, garment: str = "tshirt", exclude: list | None = None) -> Result:
     if garment != "tshirt":
         raise MeasureError("النسخة التجريبية بتقيس تيشرت بس.")
     if px_per_cm <= 0:
         raise MeasureError("المقياس (px/cm) غلط.")
-    mask, s = segment(img_bgr)
+    mask, s = segment(img_bgr, exclude)
     mask, inv = deskew(mask)
     mask, inv2 = deskew(mask)  # second pass: the first estimate is biased when the shirt is rotated a lot
     inv = (np.vstack([inv, [0, 0, 1]]) @ np.vstack([inv2, [0, 0, 1]]))[:2]

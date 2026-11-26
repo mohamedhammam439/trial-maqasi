@@ -4,7 +4,7 @@ import Svg, { Circle, Line as SvgLine, Polygon } from 'react-native-svg';
 
 import { measure } from '../api';
 import { fitScaleModel, fuseA4WithAr, type FusedScale } from '../arScale';
-import { loadArRecords, saveArRecord } from '../arStorage';
+import { saveArRecord } from '../arStorage';
 import { C, MEASUREMENT_LABELS } from '../theme';
 import type { MeasureResponse } from '../types';
 import type { ArShot } from './ArCaptureScreen';
@@ -43,6 +43,9 @@ function garmentCenter(r: MeasureResponse) {
  *  - AR only: the AR floor scale.
  *  - A4 only: the sheet in the photo (found automatically by the server).
  *  - AR + A4: A4's absolute scale, moved from the sheet to the garment with AR's perspective. */
+/** Largest AR vs A4 scale gap (fraction) before the user is asked to reshoot. */
+const AR_A4_MAX_GAP = 0.04;
+
 export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   const [boxW, setBoxW] = useState(0);
   const [arRes, setArRes] = useState<MeasureResponse | null>(null);
@@ -55,17 +58,6 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  /** AR scale / A4 scale from the last saved photo that had both: tests whether AR's error stays the same
-   *  within a session, so the sheet would only be needed once. */
-  const [lastArError, setLastArError] = useState<number | null>(null);
-
-  useEffect(() => {
-    loadArRecords().then((all) => {
-      const last = all.find((r) => r.a4?.pxPerCm);
-      if (last?.a4) setLastArError(last.ar.pxPerCm / last.a4.pxPerCm);
-    });
-  }, []);
-
   const boxH = boxW ? (boxW * shot.height) / shot.width : 0;
   const k = boxW ? shot.width / boxW : 1; // display px -> image px
 
@@ -73,27 +65,29 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
     let alive = true;
     (async () => {
       try {
-        const ar = await measure(serverUrl, shot.uri, { type: 'px_per_cm', pxPerCm: shot.ar.pxPerCm });
-        if (!alive) return;
-        setArRes(ar);
-        let a4: MeasureResponse;
+        // A4 first: its corners are then left out of the garment on the AR and fused calls too.
+        let a4: MeasureResponse | null = null;
         try {
           a4 = await measure(serverUrl, shot.uri, { type: 'a4' });
         } catch (e) {
           if (alive) setA4Error(errMsg(e));
-          return;
         }
         if (!alive) return;
-        setA4Res(a4);
-        const corners = a4.reference?.corners;
+        if (a4) setA4Res(a4);
+        const corners = a4?.reference?.corners;
+        const exclude = corners ? [corners] : undefined;
+        const ar = await measure(serverUrl, shot.uri, { type: 'px_per_cm', pxPerCm: shot.ar.pxPerCm }, exclude);
+        if (!alive) return;
+        setArRes(ar);
+        if (!a4 || !corners) return;
         const model = fitScaleModel(shot.floor ?? []);
         const center = garmentCenter(ar);
-        if (!corners || !model || !center) return;
+        if (!model || !center) return;
         const sheet = { x: corners.reduce((t, c) => t + c[0], 0) / 4, y: corners.reduce((t, c) => t + c[1], 0) / 4 };
         const f = fuseA4WithAr(a4.px_per_cm, sheet, center, model);
         if (!f) return;
         setFused(f);
-        const fr = await measure(serverUrl, shot.uri, { type: 'px_per_cm', pxPerCm: f.pxPerCm });
+        const fr = await measure(serverUrl, shot.uri, { type: 'px_per_cm', pxPerCm: f.pxPerCm }, exclude);
         if (alive) setFusedRes(fr);
       } catch (e) {
         if (alive) setError(errMsg(e));
@@ -141,6 +135,8 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
   // Draw the lines of the best result we have.
   const shown = fusedRes ?? a4Res ?? arRes;
   const sheetCorners = a4Res?.reference?.corners;
+  /** AR vs A4 scale on the same photo. They should agree within a few %; a bigger gap means one of them is off. */
+  const arA4Gap = a4Res ? shot.ar.pxPerCm / a4Res.px_per_cm - 1 : null;
 
   return (
     <ScrollView style={s.root} contentContainerStyle={{ padding: 16, paddingTop: 56, gap: 14 }}>
@@ -161,8 +157,11 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
             {((fused.perspective - 1) * 100).toFixed(1)}%
           </Text>
         )}
-        {lastArError && (
-          <Text style={s.sub}>«AR مصحّح» = الـ AR متصحّح بنسبة غلطه في آخر صورة فيها A4 ({((lastArError - 1) * 100).toFixed(0)}%).</Text>
+        {arA4Gap != null && Math.abs(arA4Gap) > AR_A4_MAX_GAP && (
+          <Text style={s.warn}>
+            الـ AR والـ A4 مختلفين {(arA4Gap * 100).toFixed(1)}%، وده كتير. غالباً الورقة مش مفرودة أو حوافها مش واضحة، أو الـ AR
+            غلط. صوّر تاني.
+          </Text>
         )}
         <Text style={s.sub}>
           بُعد الموبايل عن الأرض: {shot.ar.distanceCm != null ? `${shot.ar.distanceCm} سم` : 'مش معروف'} · الميل {shot.tiltDeg}° · ثبات القياس ±
@@ -206,7 +205,6 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
             <Text style={s.colHead}>AR</Text>
             <Text style={s.colHead}>A4</Text>
             <Text style={[s.colHead, { color: C.text, fontWeight: '700' }]}>AR+A4</Text>
-            {lastArError && <Text style={s.colHead}>AR مصحّح</Text>}
             <Text style={s.colHead}>بالمتر</Text>
             <Text style={[s.colHead, { flex: 1.1, textAlign: 'right' }]}>القياس</Text>
           </View>
@@ -217,7 +215,6 @@ export function ArResultScreen({ shot, serverUrl, onBack, onDone }: Props) {
                 <DiffText value={arRes.measurements_cm[key]} truth={t} />
                 <DiffText value={a4Res?.measurements_cm[key]} truth={t} />
                 <DiffText value={fusedRes?.measurements_cm[key]} truth={t} />
-                {lastArError && <DiffText value={arRes.measurements_cm[key] * lastArError} truth={t} />}
                 <TextInput
                   value={truth[key] ?? ''}
                   onChangeText={(v) => setTruth((p) => ({ ...p, [key]: v }))}

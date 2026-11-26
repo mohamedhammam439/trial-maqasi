@@ -25,6 +25,22 @@ export type ArTestRecord = {
 };
 
 const LOG = `${FileSystem.documentDirectory}maqasi-ar-tests.json`;
+const AR_SETTINGS = `${FileSystem.documentDirectory}maqasi-ar-settings.json`;
+
+/** Fixed phone height above the floor (cm) the AR shot must be taken from; null = not set yet. */
+export async function loadArTargetHeight(): Promise<number | null> {
+  try {
+    const info = await FileSystem.getInfoAsync(AR_SETTINGS);
+    if (!info.exists) return null;
+    const v = JSON.parse(await FileSystem.readAsStringAsync(AR_SETTINGS))?.targetHeightCm;
+    return typeof v === 'number' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export const saveArTargetHeight = (targetHeightCm: number) =>
+  FileSystem.writeAsStringAsync(AR_SETTINGS, JSON.stringify({ targetHeightCm }));
 
 export async function loadArRecords(): Promise<ArTestRecord[]> {
   try {
