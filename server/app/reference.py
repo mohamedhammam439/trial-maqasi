@@ -34,6 +34,7 @@ KNOWN_RECTS: dict[str, tuple[float, float]] = {
 LABELS = {"tape": "المتر", "a4": "ورقة A4", "card": "الكارت", "rect": "المرجع", "aruco": "ورقة الـ ArUco"}
 
 ASPECT_TOL = 0.08           # corners whose aspect is off by more than this are rejected
+CANNY_PASSES = ((30, 90), (8, 24))  # (low, high) thresholds, tried in order
 SMALL_REF_PX = 250          # long side under this many px -> accuracy warning
 DETECT_WORK_SIDE = 1600     # resolution used for automatic rectangle detection
 
@@ -98,11 +99,21 @@ def detect_rect(img_bgr: np.ndarray, long_cm: float, short_cm: float) -> np.ndar
     s = min(1.0, DETECT_WORK_SIDE / max(h, w))
     small = cv2.resize(img_bgr, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else img_bgr
     gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (5, 5), 0)
-    edges = cv2.Canny(gray, 30, 90)
+    # Normal edge thresholds first; then a low-contrast pass for a white sheet on a white or light garment.
+    for lo, hi in CANNY_PASSES:
+        best = _best_rect(gray, lo, hi, long_cm / short_cm)
+        if best is not None:
+            return refine_corners(img_bgr, best / s)
+    raise MeasureError("مش لاقيين المرجع في الصورة. حطّه مفرود على الأرض جنب القطعة، أو حدّد أركانه الأربعة بإيدك."
+                       " لو القطعة فاتحة أو بيضا استخدم ورقة ArUco.")
+
+
+def _best_rect(gray: np.ndarray, lo: int, hi: int, target: float) -> np.ndarray | None:
+    edges = cv2.Canny(gray, lo, hi)
     edges = cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    small = gray
 
-    target = long_cm / short_cm
     img_area = small.shape[0] * small.shape[1]
     best, best_score = None, None
     for c in contours:
@@ -127,9 +138,7 @@ def detect_rect(img_bgr: np.ndarray, long_cm: float, short_cm: float) -> np.ndar
         score = (aspect_err, -area)
         if best_score is None or score < best_score:
             best, best_score = q, score
-    if best is None:
-        raise MeasureError("مش لاقيين المرجع في الصورة. حطّه مفرود على الأرض جنب القطعة، أو حدّد أركانه الأربعة بإيدك.")
-    return refine_corners(img_bgr, best / s)
+    return best
 
 
 def _intersect(l1, l2):

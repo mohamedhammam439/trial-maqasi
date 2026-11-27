@@ -292,3 +292,43 @@ def test_check_feet_in_frame_still_ok():
     img[-200:, 300:700] = (30, 30, 30)  # the user's feet at the bottom edge
     body = _check(img).json()
     assert body["light"]["ok"], body
+
+
+# ------------------------------------------------------------ review fixes
+def _measure_a4(img):
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    return TestClient(app).post("/measure", files={"image": ("t.jpg", buf.tobytes(), "image/jpeg")},
+                                data={"reference": json.dumps({"type": "a4"})})
+
+
+@pytest.mark.parametrize("at", [(10.0, -8.0), (18.0, -8.0)])
+def test_sheet_on_garment_edge_is_rejected(at):
+    """A sheet that reaches the garment's edge cuts a notch in the outline: refuse instead of a wrong chest."""
+    img, _, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=at, size=(1080, 1440))
+    r = _measure_a4(img)
+    assert r.status_code == 422 and "حرف القطعة" in r.json()["detail"]
+    body = _check(img).json()
+    assert not body["ok"] and "حرف القطعة" in body["message"]
+
+
+@pytest.mark.parametrize("fg", [(215, 215, 215), (235, 235, 235)])
+def test_white_a4_found_on_light_shirt(fg):
+    img, s, _ = render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, 0.0), fg=fg, bg=(70, 65, 60), size=(1080, 1440))
+    body = _check(img).json()
+    assert body["ok"], body
+    r = _measure_a4(img)
+    assert r.status_code == 200 and abs(r.json()["px_per_cm"] / s - 1) < 0.01
+
+
+def test_sheet_upright_on_small_shirt_is_rejected(monkeypatch):
+    """Kids' size: an upright A4 spans the whole chest and splits the outline in two."""
+    import tests.synth as synth
+    full = synth.outline_cm
+    monkeypatch.setattr(synth, "outline_cm", lambda scale=1.0: full(0.7))
+    img, _, _ = synth.render_with_ref(px_per_cm=17, ref=A4, ref_at=(0.0, 0.0), ref_angle_deg=90, size=(1080, 1440))
+    r = _measure_a4(img)
+    assert r.status_code == 422 and "حرف القطعة" in r.json()["detail"]
+    # lying across, the same sheet fits and the shirt measures normally
+    img, _, _ = synth.render_with_ref(px_per_cm=17, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
+    m = _measure_a4(img).json()["measurements_cm"]
+    assert abs(m["chest_width"] - GROUND_TRUTH["chest_width"] * 0.7) <= 0.6

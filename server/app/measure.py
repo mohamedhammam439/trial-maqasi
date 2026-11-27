@@ -54,7 +54,9 @@ class Result:
 
 # ---------------------------------------------------------------- segmentation
 EXCLUDE_GROW = 1.08          # exclusion polygons are grown by this factor around their centre ...
-EXCLUDE_PAD_PX = 6           # ... plus this many work px, so the object's shadow goes too
+EXCLUDE_PAD_PX = 6
+EXCLUDE_ON_GARMENT = 0.4     # fabric share around the sheet above which it counts as lying on the garment
+EXCLUDE_EDGE_MIN, EXCLUDE_EDGE_MAX = 0.05, 0.95  # garment share around the grown cut that means it reaches the outline           # ... plus this many work px, so the object's shadow goes too
 
 
 def segment(img_bgr: np.ndarray, exclude: list | None = None) -> tuple[np.ndarray, float]:
@@ -86,6 +88,8 @@ def segment(img_bgr: np.ndarray, exclude: list | None = None) -> tuple[np.ndarra
 
     k = max(3, int(min(small.shape[:2]) * 0.006)) | 1
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    before = mask.copy()  # garment/floor split before anything is cut out
+    cuts = []  # (sheet polygon, grown polygon), work px
     for poly in exclude or []:
         p = np.asarray(poly, np.float64).reshape(-1, 2) * s
         c = p.mean(axis=0)
@@ -93,6 +97,7 @@ def segment(img_bgr: np.ndarray, exclude: list | None = None) -> tuple[np.ndarra
         n = np.linalg.norm(d, axis=1, keepdims=True)
         grown = c + d * EXCLUDE_GROW + d / np.maximum(n, 1e-6) * EXCLUDE_PAD_PX
         cv2.fillPoly(mask, [np.round(grown).astype(np.int32)], 0)
+        cuts.append((np.round(p).astype(np.int32), np.round(grown).astype(np.int32)))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
@@ -108,7 +113,22 @@ def segment(img_bgr: np.ndarray, exclude: list | None = None) -> tuple[np.ndarra
         raise MeasureError("القطعة خارجة برة الكادر. ابعد الموبايل شوية لحد ما تبان كلها.")
     filled = np.zeros_like(mask)
     cv2.drawContours(filled, [biggest], -1, 255, thickness=cv2.FILLED)
+    for sheet, grown in cuts:
+        # A sheet lying on the garment (fabric all round it) whose grown cut reaches the outline leaves a notch,
+        # and every width across that notch would be wrong. A sheet on the floor beside the garment is fine.
+        on_garment = _ring_share(before, sheet, kernel) > EXCLUDE_ON_GARMENT
+        if on_garment and EXCLUDE_EDGE_MIN < _ring_share(filled, grown, kernel) < EXCLUDE_EDGE_MAX:
+            raise MeasureError("ورقة المقياس قريبة أوي من حرف القطعة. حطها في نص التيشرت بعيد عن الحرف"
+                               " (ولو القطعة صغيرة حطها بالعرض)، أو على الأرض بعيد عن القطعة.")
     return filled, s
+
+
+def _ring_share(mask: np.ndarray, poly: np.ndarray, kernel: np.ndarray) -> float:
+    """Share of garment pixels in a thin ring just outside `poly`."""
+    inside = np.zeros(mask.shape, np.uint8)
+    cv2.fillPoly(inside, [poly], 1)
+    ring = (cv2.dilate(inside, kernel, iterations=2) > 0) & (inside == 0)
+    return float((mask[ring] > 0).mean()) if ring.any() else 0.0
 
 
 # ---------------------------------------------------------------- t-shirt
