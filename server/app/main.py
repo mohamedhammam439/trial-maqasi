@@ -86,7 +86,7 @@ def _sheet_check(img: np.ndarray, kind: str) -> dict:
             px_per_cm, aspect_err = px_per_cm_from_rect(corners, long_cm, short_cm)
     except MeasureError as e:
         return {"ok": False, "found": False, "aspect_err": None, "px_per_cm": None, "corners": None,
-                "message": str(e) if kind == "aruco" else "مش لاقيين ورقة الـ A4. حطها مفرودة في نص التيشرت."}
+                "message": str(e) if kind == "aruco" else "مش لاقيين ورقة الـ A4. حطها مفرودة في نص التيشرت. لو التيشرت أبيض استخدم ورقة ArUco."}
     ok = aspect_err <= LIVE_ASPECT_TOL and flat
     label = "ورقة الـ ArUco" if kind == "aruco" else "ورقة الـ A4"
     return {

@@ -34,6 +34,12 @@ def light_check(img_bgr: np.ndarray, sheet: list | None = None, garment_mask: np
         m = np.zeros(gray.shape, np.uint8)
         cv2.fillPoly(m, [poly], 1)
         keep = m == 0
+    if garment_mask is not None and garment_mask.any():
+        # a white garment is meant to be bright too: count clipping only on the floor and along the garment's
+        # edge (where glare would break the outline), not on its fabric
+        gm0 = cv2.resize(garment_mask.astype(np.uint8), (gray.shape[1], gray.shape[0]), interpolation=cv2.INTER_NEAREST)
+        e = max(3, gray.shape[1] // 80)
+        keep &= cv2.erode(gm0, np.ones((e, e), np.uint8)) == 0
     clipped = float((gray[keep] >= 250).mean()) if keep.any() else 0.0
     sharp = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     shadow = 0.0

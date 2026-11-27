@@ -56,7 +56,7 @@ class Result:
 EXCLUDE_GROW = 1.08          # exclusion polygons are grown by this factor around their centre ...
 EXCLUDE_PAD_PX = 6
 EXCLUDE_ON_GARMENT = 0.4     # fabric share around the sheet above which it counts as lying on the garment
-EXCLUDE_EDGE_MIN, EXCLUDE_EDGE_MAX = 0.05, 0.95  # garment share around the grown cut that means it reaches the outline           # ... plus this many work px, so the object's shadow goes too
+EXCLUDE_CLOSED = 0.9         # share of a sheet's cut that must be inside the filled outline (a closed hole)           # ... plus this many work px, so the object's shadow goes too
 
 
 def segment(img_bgr: np.ndarray, exclude: list | None = None) -> tuple[np.ndarray, float]:
@@ -114,13 +114,20 @@ def segment(img_bgr: np.ndarray, exclude: list | None = None) -> tuple[np.ndarra
     filled = np.zeros_like(mask)
     cv2.drawContours(filled, [biggest], -1, 255, thickness=cv2.FILLED)
     for sheet, grown in cuts:
-        # A sheet lying on the garment (fabric all round it) whose grown cut reaches the outline leaves a notch,
-        # and every width across that notch would be wrong. A sheet on the floor beside the garment is fine.
-        on_garment = _ring_share(before, sheet, kernel) > EXCLUDE_ON_GARMENT
-        if on_garment and EXCLUDE_EDGE_MIN < _ring_share(filled, grown, kernel) < EXCLUDE_EDGE_MAX:
+        # A sheet lying on the garment (mostly fabric around it) should leave a closed hole, which the fill above
+        # closes again. If the grown cut reaches the outline the hole is open: a notch, and every width across it
+        # would be wrong. A sheet on the floor beside the garment is not checked.
+        if _ring_share(before, sheet, kernel) > EXCLUDE_ON_GARMENT and _inside_share(filled, grown) < EXCLUDE_CLOSED:
             raise MeasureError("ورقة المقياس قريبة أوي من حرف القطعة. حطها في نص التيشرت بعيد عن الحرف"
-                               " (ولو القطعة صغيرة حطها بالعرض)، أو على الأرض بعيد عن القطعة.")
+                               " (ولو القطعة صغيرة حطها بالطول)، أو على الأرض جنب القطعة.")
     return filled, s
+
+
+def _inside_share(mask: np.ndarray, poly: np.ndarray) -> float:
+    """Share of `poly`'s pixels that are inside the filled garment."""
+    inside = np.zeros(mask.shape, np.uint8)
+    cv2.fillPoly(inside, [poly], 1)
+    return float((mask[inside > 0] > 0).mean()) if inside.any() else 1.0
 
 
 def _ring_share(mask: np.ndarray, poly: np.ndarray, kernel: np.ndarray) -> float:

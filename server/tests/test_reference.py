@@ -320,15 +320,28 @@ def test_white_a4_found_on_light_shirt(fg):
     assert r.status_code == 200 and abs(r.json()["px_per_cm"] / s - 1) < 0.01
 
 
-def test_sheet_upright_on_small_shirt_is_rejected(monkeypatch):
-    """Kids' size: an upright A4 spans the whole chest and splits the outline in two."""
+def test_small_shirt_sheet_upright_fits_off_centre_rejected(monkeypatch):
+    """Kids' size (chest ~31 cm): an upright A4 in the middle fits; 3 cm off centre it reaches the edge."""
     import tests.synth as synth
     full = synth.outline_cm
-    monkeypatch.setattr(synth, "outline_cm", lambda scale=1.0: full(0.7))
-    img, _, _ = synth.render_with_ref(px_per_cm=17, ref=A4, ref_at=(0.0, 0.0), ref_angle_deg=90, size=(1080, 1440))
+    monkeypatch.setattr(synth, "outline_cm", lambda scale=1.0: full(0.6))
+    mid = -36 * (1 - 0.6)  # render_with_ref centres the full-size shirt, so move to the small shirt's middle
+    img, _, _ = synth.render_with_ref(px_per_cm=12, ref=A4, ref_at=(0.0, mid), ref_angle_deg=90, size=(1080, 1440))
+    m = _measure_a4(img).json()["measurements_cm"]
+    assert abs(m["chest_width"] - GROUND_TRUTH["chest_width"] * 0.6) <= 0.6
+    img, _, _ = synth.render_with_ref(px_per_cm=12, ref=A4, ref_at=(3.0, mid), ref_angle_deg=90, size=(1080, 1440))
     r = _measure_a4(img)
     assert r.status_code == 422 and "حرف القطعة" in r.json()["detail"]
-    # lying across, the same sheet fits and the shirt measures normally
-    img, _, _ = synth.render_with_ref(px_per_cm=17, ref=A4, ref_at=(0.0, 0.0), size=(1080, 1440))
-    m = _measure_a4(img).json()["measurements_cm"]
-    assert abs(m["chest_width"] - GROUND_TRUTH["chest_width"] * 0.7) <= 0.6
+
+
+@pytest.mark.parametrize("v", [245, 250])
+def test_white_shirt_with_aruco_passes_light_check(v, monkeypatch):
+    """A white shirt is bright, not glare."""
+    import functools
+    import tests.synth as synth
+    monkeypatch.setattr(synth, "render_with_ref", functools.partial(synth.render_with_ref, fg=(v, v, v), bg=(70, 65, 60)))
+    img, _, _ = synth.render_with_aruco(px_per_cm=12)
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    body = TestClient(app).post("/check_a4", files={"image": ("t.jpg", buf.tobytes(), "image/jpeg")},
+                                data={"kind": "aruco"}).json()
+    assert body["ok"], body
