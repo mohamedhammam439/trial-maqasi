@@ -51,6 +51,10 @@ export type ArDebug = {
 const A4_CHECK_MS = 1500;
 /** Auto-capture once everything has been OK for this long. */
 const AUTO_HOLD_MS = 1000;
+/** Good live checks in a row needed before the shot (so one lucky frame can't fire it). */
+const OK_STREAK = 2;
+/** A live-check answer older than this no longer counts (slow or stuck server). */
+const A4_MAX_AGE_MS = 2 * A4_CHECK_MS + 1000;
 /** Photos per shot (the first one plus extras); the result takes the median. */
 const FRAMES = 3;
 
@@ -109,6 +113,9 @@ export function ArCaptureScreen({
   const pr = PixelRatio.get();
   const [a4, setA4] = useState<A4Check | null>(null);
   const [a4Err, setA4Err] = useState<string | null>(null);
+  /** Good answers in a row, and whether the latest one is still recent enough to trust. */
+  const [okStreak, setOkStreak] = useState(0);
+  const [a4Fresh, setA4Fresh] = useState(false);
   const busyRef = useRef(false);
   busyRef.current = busy;
   /** True while a live A4 check is taking its screenshot / waiting for the server. */
@@ -182,11 +189,14 @@ export function ArCaptureScreen({
         if (alive) {
           setA4(r);
           setA4Err(null);
+          setOkStreak((n) => (r.ok ? n + 1 : 0));
+          setA4Fresh(true);
         }
       } catch (e) {
         if (alive) {
           setA4(null);
           setA4Err(e instanceof Error ? e.message : String(e));
+          setOkStreak(0);
         }
       } finally {
         checkingRef.current = false;
@@ -217,7 +227,17 @@ export function ArCaptureScreen({
     return out;
   };
 
-  const a4Ok = !!a4?.ok;
+  // Each new answer restarts the clock; with no answer for A4_MAX_AGE_MS the last one stops counting.
+  useEffect(() => {
+    if (!a4Fresh) return;
+    const t = setTimeout(() => {
+      setA4Fresh(false);
+      setOkStreak(0);
+    }, A4_MAX_AGE_MS);
+    return () => clearTimeout(t);
+  }, [a4, a4Fresh]);
+
+  const a4Ok = !!a4?.ok && a4Fresh && okStreak >= OK_STREAK;
   const ready = !!(supported && tracking && floorCm != null && level && a4Ok && !busy);
 
   // Auto-capture: once everything has been OK for AUTO_HOLD_MS, shoot without touching the phone.
@@ -339,9 +359,11 @@ export function ArCaptureScreen({
               ? 'بنفحص الإضاءة والورقة والتيشرت…'
               : !a4.ok
                 ? a4.message
-                : busy
-                  ? 'بيصوّر… ثبّت الموبايل'
-                  : `الورقة مظبوطة والميل ${tilt.toFixed(1)}° — ثبّت، هيصوّر لوحده`;
+                : !a4Ok
+                  ? 'كله مظبوط، ثبّت الموبايل… بنتأكد مرة كمان'
+                  : busy
+                    ? 'بيصوّر… ثبّت الموبايل'
+                    : `الورقة مظبوطة والميل ${tilt.toFixed(1)}° — ثبّت، هيصوّر لوحده`;
 
   return (
     <View style={s.root}>
